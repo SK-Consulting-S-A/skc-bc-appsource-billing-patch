@@ -1,9 +1,58 @@
 {
     "al.enableCodeAnalysis": true,
+    "al.enableExternalRulesets": true,
     "al.codeAnalyzers": [
-        "${CodeCop}",
-        "${UICop}",
         "${AppSourceCop}",
-        "${PerTenantExtensionCop}"
-    ]
+        "${UICop}",
+        "${CodeCop}",
+        "${analyzerFolder}BusinessCentral.LinterCop.dll"
+    ],
+    "[al]": {
+        "editor.wordBasedSuggestions": "off",
+        "editor.suggestSelection": "first",
+        "editor.formatOnSave": true,
+        "editor.semanticHighlighting.enabled": true,
+        "editor.inlayHints.fontSize": 12
+    },
+    "CRS.ObjectNameSuffix": "085SKC",
+    "CRS.FileNamePattern": "<ObjectNameShort>.<ObjectTypeShortPascalCase>.al",
+    "CRS.FileNamePatternExtensions": "<ObjectNameShort>.<ObjectTypeShortPascalCase>.al",
+    "CRS.FileNamePatternPageCustomizations": "<ObjectNameShort>.<ObjectTypeShortPascalCase>.al",
+    "CRS.OnSaveAlFileAction": "Rename",
+    "CRS.ReorganizeByNamespace": true,
+    "alOutline.defaultAppArea": "All",
+    "alOutline.defaultDataClassification": "CustomerContent",
+    "alOutline.enableCodeCopFixes": true,
+    "alOutline.fixCodeCopMissingParenthesesOnSave": true,
+    "alOutline.pageActionToolTip": "Executes the %1 action.",
+    "alOutline.pageFieldToolTip": "Specifies the value of the %1 field.",
+    "alOutline.codeActionsOnSave": [
+        "FormatDocument",
+        "OneStatementPerLine",
+        "SortPermissions",
+        "SortProperties",
+        "SortProcedures",
+        "SortVariables"
+    ],
+    "alOutline.codeCleanupActions": [
+        "RefreshToolTips",
+        "AddTableFieldCaptions",
+        "AddToolTips",
+        "FixIdentifiersCase",
+        "FixKeywordsCase",
+        "CollapseEmptyBrackets",
+        "ConvertObjectIdsToNames",
+        "MakeFlowFieldsReadOnly",
+        "RemoveBeginEnd",
+        "RemoveWithStatements",
+        "RemoveUnusedVariables",
+        "RemoveRedundantDataClassification",
+        "RemoveProceduresSemicolon",
+        "RemoveEmptyTriggers",
+        "RemoveEmptyLines",
+        "RemoveEmptySections",
+        "TrimTrailingWhitespace"
+    ],
+    "alCodeActions.executeCodeActionsAutomatically": true,
+    "alCodeActions.extractToLabelCreatesComment": true
 }

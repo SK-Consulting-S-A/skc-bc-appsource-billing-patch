@@ -2,14 +2,14 @@
   "id": "95a0844b-7660-4acd-ae5e-2a12ea8b7c5e",
   "name": "Subscription Billing Community Patch",
   "publisher": "SK Consulting S.A.",
-  "version": "1.0.0.0",
-  "brief": "Community improvements for Microsoft Subscription Billing",
-  "description": "Extends Microsoft Subscription Billing with auto-renewal management, quantity change tracking, interim billing, expiring-subscription cues, contract merge utilities, and enhanced API surfaces.",
+  "version": "28.0.0.0",
+  "brief": "A comprehensive bugfixing app for Subscription Billing",
+  "description": "A comprehensive bugfixing and enhancement app for Microsoft Subscription Billing. Addresses known issues, improves stability, and extends functionality with community-driven fixes for auto-renewal management, quantity change tracking, interim billing, expiring-subscription cues, contract merge utilities, and enhanced API surfaces.",
   "privacyStatement": "https://www.skc.lu/privacy/",
   "EULA": "https://www.skc.lu/solveit/eula",
   "help": "https://www.skc.lu/solveit/help/",
   "url": "https://www.skc.lu",
-  "logo": "",
+  "logo": "logo.png",
   "dependencies": [
     {
       "id": "3099ffc7-4cf7-4df6-9b96-7e4bc2bb587c",

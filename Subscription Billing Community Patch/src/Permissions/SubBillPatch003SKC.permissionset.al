@@ -2,7 +2,7 @@ namespace SKC.Subscription;
 
 using Microsoft.SubscriptionBilling;
 
-permissionset 70631095 SubBillingPatch003SKC
+permissionset 70631095 SubBillPatch003SKC
 {
     Access = Public;
     Assignable = true;

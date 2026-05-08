@@ -145,7 +145,7 @@ Delete these files (they now live in the patch app):
 
 Remove references to all moved objects (tables, pages, codeunits) from
 `SubSyncPerm003SKC.permissionset.al`. The patch app's own
-`SubBillingPatch003SKC` permission set covers them.
+`SubBillPatch003SKC` permission set covers them.
 
 ## Rollback Plan
 

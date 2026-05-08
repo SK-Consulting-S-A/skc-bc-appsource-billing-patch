@@ -11,7 +11,6 @@ pageextension 70631094 SubBillingRoleCenter003SKC extends "Sub. Billing Role Cen
             part(ExpiringActivities003SKC; SubExpiringActivities003SKC)
             {
                 ApplicationArea = All;
-                ToolTip = 'Shows subscriptions that are expiring soon.';
             }
         }
     }
