@@ -1,5 +1,16 @@
 {
     "version": "0.2.0",
     "configurations": [
+        {
+            "name": "Publish DemoSandbox",
+            "request": "launch",
+            "schemaUpdateMode": "ForceSync",
+            "type": "al",
+            "environmentType": "Sandbox",
+            "environmentName": "DemoSandbox",
+            "tenant": "00000000-0000-0000-0000-000000000000",
+            "startupObjectType": "Page",
+            "startupObjectId": 5201
+        }
     ]
 }

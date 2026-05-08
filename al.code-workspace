@@ -1,11 +1,16 @@
 {
   "folders": [
     {
+      "name": "Subscription Billing Community Patch",
       "path": "Subscription Billing Community Patch"
     },
     {
-      "path": ".AL-Go"
+      "name": "docs",
+      "path": "docs"
     }
   ],
-  "settings": {}
+  "settings": {
+    "powershell.cwd": "docs",
+    "al.showHomeAtStartup": "Always"
+  }
 }

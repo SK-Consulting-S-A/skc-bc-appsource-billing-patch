@@ -182,7 +182,6 @@ page 70631071 SubBillingStatus003SKC
             {
                 ApplicationArea = All;
                 Caption = 'Billing History';
-                ToolTip = 'Shows the billing history for this subscription line.';
                 SubPageLink = "Subscription Line Entry No." = field("Entry No.");
             }
         }

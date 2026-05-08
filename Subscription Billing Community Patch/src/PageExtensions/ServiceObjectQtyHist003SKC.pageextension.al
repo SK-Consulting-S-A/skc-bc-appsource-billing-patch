@@ -25,7 +25,6 @@ pageextension 70631092 ServiceObjectQtyHist003SKC extends "Service Object"
             {
                 ApplicationArea = All;
                 Caption = 'Quantity History';
-                ToolTip = 'Shows the history of quantity changes for this subscription.';
                 SubPageLink = SubscriptionHeaderNo003SKC = field("No.");
             }
         }
