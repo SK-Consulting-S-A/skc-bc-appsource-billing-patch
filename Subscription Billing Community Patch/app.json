@@ -3,29 +3,39 @@
   "name": "Subscription Billing Community Patch",
   "publisher": "SK Consulting S.A.",
   "version": "1.0.0.0",
-  "brief": "",
-  "description": "",
-  "privacyStatement": "",
-  "EULA": "",
-  "help": "",
-  "url": "",
+  "brief": "Community improvements for Microsoft Subscription Billing",
+  "description": "Extends Microsoft Subscription Billing with auto-renewal management, quantity change tracking, interim billing, expiring-subscription cues, contract merge utilities, and enhanced API surfaces.",
+  "privacyStatement": "https://www.skc.lu/privacy/",
+  "EULA": "https://www.skc.lu/solveit/eula",
+  "help": "https://www.skc.lu/solveit/help/",
+  "url": "https://www.skc.lu",
   "logo": "",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "id": "3099ffc7-4cf7-4df6-9b96-7e4bc2bb587c",
+      "name": "Subscription Billing",
+      "publisher": "Microsoft",
+      "version": "27.0.0.0"
+    }
+  ],
   "screenshots": [],
-  "platform": "1.0.0.0",
-  "application": "22.0.0.0",
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "14.0",
+  "target": "Cloud",
   "idRanges": [
     {
       "from": 70631050,
-      "to": 70631100
+      "to": 70631150
     }
   ],
   "features": [
-    "NoImplicitWith"
+    "NoImplicitWith",
+    "TranslationFile"
   ],
   "resourceExposurePolicy": {
     "allowDebugging": true,
-    "allowDownloadingSource": false,
-    "includeSourceInSymbolFile": false
+    "allowDownloadingSource": true,
+    "includeSourceInSymbolFile": true
   }
 }

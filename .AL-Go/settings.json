@@ -1,10 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/AL-Go-Actions/v9.0/.Modules/settings.schema.json",
-  "country": "us",
+  "country": "w1",
   "appSourceCopMandatoryAffixes": [
-    "<affix>"
+    "SKC"
   ],
-  "appFolders": [],
+  "appFolders": [
+    "Subscription Billing Community Patch"
+  ],
   "testFolders": [],
   "bcptTestFolders": []
 }
