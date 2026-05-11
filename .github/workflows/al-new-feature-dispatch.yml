@@ -1,0 +1,126 @@
+name: "New AL Feature Dispatcher"
+
+# Lightweight dispatcher that only triggers al-new-feature when the
+# "ready-to-implement" label is added.  This prevents the expensive
+# agentic workflow from spinning up for every label change.
+#
+# This workflow is deployed to EVERY org BC repo by the bootstrap job
+# in al-org-scan.yml.  When running in a target repo it dispatches
+# the agent in BC-Agents, passing target_repo so the agent operates
+# on the correct codebase.
+#
+# PREREQUISITE: The org-level secret GH_AW_GITHUB_MCP_SERVER_TOKEN
+# must be available to all BC repos (set as an org secret with
+# "All repositories" or "Selected repositories" visibility).
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'ready-to-implement'
+    steps:
+      - name: Dispatch al-new-feature agent
+        id: dispatch
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const AGENT_OWNER = 'SK-Consulting-S-A';
+            const AGENT_REPO  = 'BC-Agents';
+            const thisRepo = `${context.repo.owner}/${context.repo.repo}`;
+            const isLocal  = (context.repo.repo === AGENT_REPO);
+            const issueNumber = context.payload.issue.number;
+
+            // Guard: skip if the target repo already has an open implementation PR for this issue.
+            // Uses the standard branch naming convention feature/<issueNumber>-* from al-new-feature.
+            // This is more reliable than cross-referenced timeline events, which false-positive on
+            // any PR in any repo that merely mentions the issue URL (e.g. triage PRs, unrelated fix PRs).
+            let openPulls;
+            try {
+              const resp = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100,
+              });
+              openPulls = resp.data;
+            } catch (err) {
+              core.setFailed(
+                `Could not list open PRs on ${thisRepo} (status=${err.status ?? 'unknown'}): ${err.message}.\n` +
+                `GH_AW_GITHUB_MCP_SERVER_TOKEN likely lacks pull-requests:read on this repository.`
+              );
+              core.setOutput('failure_reason',
+                `Missing pull-requests:read scope on ${thisRepo} — could not deduplicate PR check.`);
+              return;
+            }
+            const hasLinkedPR = openPulls.some(pr => pr.head.ref.startsWith(`feature/${issueNumber}-`));
+            if (hasLinkedPR) {
+              core.info(
+                `Issue #${issueNumber} already has an open implementation PR — skipping dispatch.`
+              );
+              return;
+            }
+
+            const inputs = {
+              issue_number: String(issueNumber),
+              ...(isLocal ? {} : { target_repo: thisRepo }),
+            };
+
+            try {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: AGENT_OWNER,
+                repo: AGENT_REPO,
+                ref: 'main',
+                workflow_id: 'al-new-feature.lock.yml',
+                inputs,
+              });
+              core.info(`Dispatched al-new-feature for ${thisRepo}#${issueNumber}`);
+            } catch (err) {
+              const requiredScopes = err.response?.headers?.['x-accepted-github-permissions'] ?? 'actions=write';
+              const reason =
+                `createWorkflowDispatch on ${AGENT_OWNER}/${AGENT_REPO} failed ` +
+                `(HTTP ${err.status ?? '?'}): ${err.message}. ` +
+                `Required scopes: ${requiredScopes}. ` +
+                `GH_AW_GITHUB_MCP_SERVER_TOKEN must have actions:write on ${AGENT_OWNER}/${AGENT_REPO} ` +
+                `(fine-grained PAT: grant Actions → write; classic PAT: add "workflow" scope). ` +
+                `The org-scan weekly batch will still dispatch this issue in the next run, ` +
+                `or an admin can manually dispatch from BC-Agents → Actions → New AL Feature Agent.`;
+              core.setFailed(reason);
+              core.setOutput('failure_reason', reason);
+              core.setOutput('issue_number', String(issueNumber));
+            }
+
+      - name: Post dispatcher-failure comment on issue
+        if: failure() && steps.dispatch.outputs.failure_reason != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issue_number = Number('${{ steps.dispatch.outputs.issue_number || github.event.issue.number }}');
+            const reason = `${{ steps.dispatch.outputs.failure_reason }}`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '⚠️ **Could not queue this issue for automatic implementation.**',
+              '',
+              `**Reason:** ${reason}`,
+              '',
+              `**Run:** [View dispatcher logs](${runUrl})`,
+              '',
+              'The `ready-to-implement` label was NOT removed — re-label after fixing the token, ' +
+              'or wait for the weekly org-scan (Monday 07:30 UTC) which dispatches from BC-Agents directly.',
+              '',
+              '_Generated by [BC-Agents](https://github.com/SK-Consulting-S-A/BC-Agents)._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              body,
+            }).catch(e => core.warning(`Could not post failure comment: ${e.message}`));
