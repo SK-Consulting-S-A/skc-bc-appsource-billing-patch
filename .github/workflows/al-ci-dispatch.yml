@@ -1,0 +1,160 @@
+# When a PR workflow fails in this repo, opens a tracking issue in BC-Agents and
+# dispatches al-ci-fix. Re-dispatches after bot fix commits too (until CI passes).
+# A rolling cap per PR prevents infinite retries — tune MAX_DISPATCHES / WINDOW_DAYS below.
+
+name: "CI Failure Analysis Dispatcher"
+
+on:
+  workflow_run:
+    # zizmor: ignore[dangerous-triggers] - secured with same-repo and fork checks below
+    # No branches filter — AL-Go PR workflows run on feature branches, not main.
+    # Filtering is done in the job condition below.
+    workflows: ["*"]
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+concurrency:
+  group: ci-dispatch-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # Only fire for failures on PRs in the same repo (not forks).
+    # Bot-authored commits are allowed so auto-fix can iterate until checks pass.
+    if: |
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.repository.id == github.repository_id &&
+      !github.event.workflow_run.repository.fork
+    steps:
+      - name: Extract context and create tracking issue in BC-Agents
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const wr = context.payload.workflow_run;
+
+            // Tracking issues and dispatch always target BC-Agents — NOT the repo
+            // where this dispatcher is deployed (e.g. Timely).
+            const AGENT_OWNER = 'SK-Consulting-S-A';
+            const AGENT_REPO  = 'BC-Agents';
+            const targetRepo  = `${context.repo.owner}/${context.repo.repo}`;
+            const prBranch    = wr.head_branch;
+
+            // --- Resolve PR number ---
+            // 1. Use the pull_requests array from the event payload (most reliable)
+            let prNumber = wr.pull_requests?.[0]?.number;
+
+            // 2. Fallback: search open PRs by matching head SHA + head branch
+            if (!prNumber) {
+              const headOwner =
+                wr.head_repository?.owner?.login || context.repo.owner;
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                head: `${headOwner}:${wr.head_branch}`,
+              });
+              prNumber = prs.find((p) => p.head.sha === wr.head_sha)?.number;
+            }
+
+            if (!prNumber) {
+              core.warning(
+                `No open PR found for workflow run ${wr.id} ` +
+                `(head_sha=${wr.head_sha}, branch=${wr.head_branch}). Skipping.`
+              );
+              return;
+            }
+
+            // Rolling cap: count recent ci-failure-analysis issues for this PR in BC-Agents.
+            const MAX_DISPATCHES = 15;
+            const WINDOW_DAYS = 7;
+            const prMarker = `${targetRepo}#${prNumber}`;
+            const since = new Date(
+              Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000
+            )
+              .toISOString()
+              .slice(0, 10);
+            const searchQ = `repo:${AGENT_OWNER}/${AGENT_REPO} is:issue label:ci-failure-analysis created:>=${since}`;
+            const searchItems = await github.paginate(github.rest.search.issuesAndPullRequests, {
+              q: searchQ,
+              per_page: 100,
+            });
+            const recentForPr = searchItems.filter((i) => i.title.includes(prMarker));
+            if (recentForPr.length >= MAX_DISPATCHES) {
+              const msg = [
+                '## ⚠️ CI auto-fix dispatch limit reached',
+                '',
+                `There have already been **${recentForPr.length}** CI failure tracking issues in **${AGENT_OWNER}/${AGENT_REPO}** for this PR in the last **${WINDOW_DAYS}** days (limit: **${MAX_DISPATCHES}**).`,
+                'Automatic dispatch has stopped to avoid a runaway retry loop.',
+                '',
+                'Please fix the failing workflow manually or inspect the latest run logs.',
+                '',
+                `_BC-Agents \`al-ci-dispatch\` — adjust \`MAX_DISPATCHES\` / \`WINDOW_DAYS\` in that workflow if needed._',
+              ].join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: msg,
+              }).catch((e) => core.warning(`Could not post cap comment on PR: ${e.message}`));
+              core.warning(
+                `Dispatch cap (${MAX_DISPATCHES}) reached for ${prMarker} in ${WINDOW_DAYS}d — skipping.`
+              );
+              return;
+            }
+
+            // --- Build issue body carrying all context for the agent ---
+            // target_repo and pr_branch are needed so the fix agent can clone
+            // and push to the correct repo/branch without ambiguity.
+            const body = [
+              '<!-- ci-analysis-context -->',
+              `<!-- ci-dispatch-pr: ${prMarker} -->`,
+              'This issue was created automatically by the CI Failure Analysis Dispatcher.',
+              'The BC-Agents CI fix agent will analyse the failure, fix any AL code issues,',
+              'and post a comment on the PR.',
+              '',
+              '| Field | Value |',
+              '|-------|-------|',
+              `| **Failing Workflow** | \`${wr.name}\` |`,
+              `| **Workflow Run ID** | \`${wr.id}\` |`,
+              `| **Pull Request** | #${prNumber} |`,
+              `| **Head SHA** | \`${wr.head_sha}\` |`,
+              `| **Head Branch** | \`${prBranch}\` |`,
+              `| **Target Repo** | \`${targetRepo}\` |`,
+              `| **Conclusion** | \`${wr.conclusion}\` |`,
+              `| **Run URL** | ${wr.html_url} |`,
+            ].join('\n');
+
+            // Create tracking issue in BC-Agents (not the deployed target repo)
+            // so the BC-Agents agents can read it with their native token.
+            const { data: issue } = await github.rest.issues.create({
+              owner: AGENT_OWNER,
+              repo:  AGENT_REPO,
+              title: `CI Failure: \`${wr.name}\` on ${targetRepo}#${prNumber}`,
+              body,
+              labels: ['ci-failure-analysis'],
+            });
+
+            core.info(
+              `Created CI failure tracking issue #${issue.number} in ${AGENT_OWNER}/${AGENT_REPO} ` +
+              `for ${targetRepo}#${prNumber}, run ${wr.id}`
+            );
+
+            // Dispatch the CI fix agent in BC-Agents.
+            await github.rest.actions.createWorkflowDispatch({
+              owner: AGENT_OWNER,
+              repo:  AGENT_REPO,
+              ref:   'main',
+              workflow_id: 'al-ci-fix.lock.yml',
+              inputs: {
+                issue_number: String(issue.number),
+              },
+            });
+
+            core.info(`Dispatched al-ci-fix workflow for issue #${issue.number}`);
