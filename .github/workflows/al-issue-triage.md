@@ -47,7 +47,7 @@ Before doing anything else, check the issue title and the `actor` from the GitHu
 
 These are self-generated pipeline report issues and do not need triage. Call the `noop` tool with the message: "Skipped: automated pipeline report issue."
 
-- If the event is `reopened`, check whether the issue body already contains a `### Context (added by BC-Agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
+- If the event is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
 Otherwise, proceed with the steps below.
 
@@ -87,7 +87,7 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 
 ```markdown
 ---
-### Context (added by BC-Agents triage)
+### Context (added by skc-bc-internal-agents triage)
 
 **Affected Object:** `<ObjectType> <ID> <ObjectName>` (file: `<path/to/file.al>`)
 **Related Procedure / Action:** `<name>` (line ~<N>)
@@ -176,14 +176,14 @@ Post a single comment that includes:
 
 > 🔄 **This issue has been re-opened.**
 >
-> The previous fix appears to be incomplete or a regression was introduced. The BC-Agents triage agent has reviewed the issue state:
+> The previous fix appears to be incomplete or a regression was introduced. The skc-bc-internal-agents triage agent has reviewed the issue state:
 >
 > - **Classification:** `<type>` / `<priority>`
 > - **Previous context:** [retained from the triage section in the issue body]
 >
 > If the original acceptance criteria are still valid, applying `ready-to-implement` will queue a new implementation run. If the requirements have changed, please update the issue body before re-applying the label.
 >
-> _Acknowledged by the BC-Agents triage pipeline._
+> _Acknowledged by the skc-bc-internal-agents triage pipeline._
 
 ## Important Rules
 
