@@ -1,8 +1,16 @@
 ---
 description: "Auto-triage new issues for Business Central AL development"
 on:
-  issues:
-    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number to triage in the current repository"
+        required: true
+        type: string
+      issue_action:
+        description: "Original issue event action that triggered triage (opened or reopened)"
+        required: false
+        type: string
 permissions:
   contents: read
   issues: read
@@ -28,17 +36,32 @@ engine:
 network:
   allowed:
     - github
+env:
+  AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
+  AL_ISSUE_TRIAGE_ACTION: ${{ github.event.inputs.issue_action || 'opened' }}
 ---
 
 # Issue Triage Agent – BC AL
 
-When a new issue is opened in this repository, perform the following steps:
+When the issue triage dispatcher requests analysis for an issue in this repository, perform the following steps:
 
-## 0. Pre-check: Skip Automated Report and CI Tracking Issues
+## 0. Resolve the Issue and Pre-check for Skips
 
-Before doing anything else, check the issue title, body, labels, and the `actor` from the GitHub context (the user who opened or reopened the issue).
+Before doing anything else:
 
-- If the actor is `github-actions[bot]` **and** the issue title contains any of the following strings, **stop immediately and do nothing**:
+1. Read the runtime inputs from environment variables and print them first:
+   - `echo "Issue number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER"`
+   - `echo "Issue action: $AL_ISSUE_TRIAGE_ACTION"`
+2. If `AL_ISSUE_TRIAGE_ISSUE_NUMBER` is empty, call `missing_data` with `data_type: "issue_number"` and stop.
+3. Read that issue explicitly by number from the current repository.
+4. Because this workflow runs via `workflow_dispatch`, **all safe output writes must provide the issue number explicitly**:
+   - `update-issue` → always set `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
+   - `add-labels` → always set `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
+   - `add-comment` → always set `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
+
+Then inspect the issue title, body, and labels.
+
+- If the issue title contains any of the following strings, **stop immediately and do nothing**:
   - `Org Issue Scan`
   - `Triage Report`
   - `[agentics]`
@@ -51,7 +74,7 @@ Before doing anything else, check the issue title, body, labels, and the `actor`
 
 These are self-generated pipeline report or CI-tracking issues and do not need triage. Call the `noop` tool with the message: "Skipped: automated pipeline report or CI tracking issue."
 
-- If the event is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
+- If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
 Otherwise, proceed with the steps below.
 
@@ -110,7 +133,7 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 
 - If the issue was too brief (e.g. one-line description), fill in the "What needs to change" and "Acceptance Criteria" sections with your best interpretation based on the source context, and add a note: `> ⚠️ Description was brief — the above is inferred from source. Reporter should confirm.`
 - If no source was found, still add the structured section but leave "Affected Object" as `Unknown — please provide the AL page or codeunit name`.
-- Update the issue body with this enriched version using the `update-issue` safe output tool.
+- Update the issue body with this enriched version using the `update-issue` safe output tool, always setting `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER` explicitly.
 
 ---
 
@@ -145,6 +168,8 @@ Apply the appropriate labels based on your analysis:
 - `priority: medium`
 - `priority: low`
 
+Always provide `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER` explicitly when adding labels.
+
 ---
 
 ## 6. Evaluate Readiness for Automatic Implementation
@@ -176,7 +201,7 @@ Post a single comment that includes:
 6. If the description was inferred from source (brief original): mention this and ask the reporter to confirm the interpretation in the issue body.
 7. A note that the AL-Go CI pipeline will validate any proposed fix.
 
-**If the event is `reopened`** (issue was previously closed and is now re-opened), use this comment template instead:
+**If `AL_ISSUE_TRIAGE_ACTION` is `reopened`** (issue was previously closed and is now re-opened), use this comment template instead:
 
 > 🔄 **This issue has been re-opened.**
 >
@@ -196,3 +221,4 @@ Post a single comment that includes:
 - Only apply labels that already exist in the repository.
 - If you are uncertain about classification, apply `needs-triage` and note the uncertainty in the comment.
 - Only apply `ready-to-implement` if it already exists as a label in the repository — do not create it.
+- Always provide the explicit issue number on every safe output write because this workflow is not triggered directly by the issue event.
