@@ -23,7 +23,7 @@
 #
 # Auto-triage new issues for Business Central AL development
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"424474e9d85c2c4ea3eb57cfa881375f47e7d8bca459ba3e27ddfc3a706b0d63","compiler_version":"v0.48.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"d1139ccaef6af857deffafa01fad4c5e8a699062d962ff6201c9e3bea63b6857","compiler_version":"v0.48.4"}
 
 name: "Issue Triage Agent – BC AL"
 "on":
@@ -395,7 +395,7 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
           cat > /opt/gh-aw/safeoutputs/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-          {"add_comment":{"max":1,"target":"*"},"add_labels":{"max":6,"target":"*"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"update_issue":{"max":1}}
+          {"add_comment":{"max":1,"target":"*"},"add_labels":{"allowed":["bug","enhancement","documentation","question","security","needs-triage","priority: critical","priority: high","priority: medium","priority: low","ready-to-implement"],"max":6,"target":"*"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"update_issue":{"max":1}}
           GH_AW_SAFE_OUTPUTS_CONFIG_EOF
           cat > /opt/gh-aw/safeoutputs/tools.json << 'GH_AW_SAFE_OUTPUTS_TOOLS_EOF'
           [
@@ -421,7 +421,7 @@ jobs:
               "name": "add_comment"
             },
             {
-              "description": "Add labels to an existing GitHub issue or pull request for categorization and filtering. Labels must already exist in the repository. For creating new issues with labels, use create_issue with the labels property instead. CONSTRAINTS: Maximum 6 label(s) can be added. Target: *.",
+              "description": "Add labels to an existing GitHub issue or pull request for categorization and filtering. Labels must already exist in the repository. For creating new issues with labels, use create_issue with the labels property instead. CONSTRAINTS: Maximum 6 label(s) can be added. Only these labels are allowed: [bug enhancement documentation question security needs-triage priority: critical priority: high priority: medium priority: low ready-to-implement]. Target: *.",
               "inputSchema": {
                 "additionalProperties": false,
                 "properties": {
