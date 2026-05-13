@@ -1,0 +1,51 @@
+name: "Issue Triage Dispatcher"
+
+# Lightweight gate for issue triage. This keeps CI tracking issues and
+# self-generated reports from spinning up the heavier agent workflow.
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  actions: write
+  issues: read
+
+concurrency:
+  group: triage-dispatch-${{ github.repository_id }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    if: |
+      !(
+        (github.actor == 'github-actions[bot]') &&
+        (
+          contains(github.event.issue.title, 'Org Issue Scan') ||
+          contains(github.event.issue.title, 'Triage Report') ||
+          contains(github.event.issue.title, '[agentics]') ||
+          contains(github.event.issue.title, '[agent]')
+        )
+      ) &&
+      !startsWith(github.event.issue.title, 'CI Failure:') &&
+      !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
+      !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"')
+    steps:
+      - name: Dispatch issue triage agent
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const ref = context.payload.repository.default_branch || 'main';
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref,
+              workflow_id: 'al-issue-triage.lock.yml',
+              inputs: {
+                issue_number: String(context.issue.number),
+                issue_action: String(context.payload.action || 'opened'),
+              },
+            });
+            core.info(`Dispatched al-issue-triage for issue #${context.issue.number} (${context.payload.action || 'opened'})`);
