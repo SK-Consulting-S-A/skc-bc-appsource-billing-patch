@@ -34,18 +34,22 @@ network:
 
 When a new issue is opened in this repository, perform the following steps:
 
-## 0. Pre-check: Skip Automated Report Issues
+## 0. Pre-check: Skip Automated Report and CI Tracking Issues
 
-Before doing anything else, check the issue title and the `actor` from the GitHub context (the user who opened or reopened the issue).
+Before doing anything else, check the issue title, body, labels, and the `actor` from the GitHub context (the user who opened or reopened the issue).
 
 - If the actor is `github-actions[bot]` **and** the issue title contains any of the following strings, **stop immediately and do nothing**:
   - `Org Issue Scan`
   - `Triage Report`
   - `[agentics]`
   - `[agent]`
-  - `CI Failure:`
 
-These are self-generated pipeline report issues and do not need triage. Call the `noop` tool with the message: "Skipped: automated pipeline report issue."
+- If **any** of the following is true, **stop immediately and do nothing**:
+  - the issue title starts with `CI Failure:`
+  - the issue body contains `<!-- ci-analysis-context -->`
+  - the issue already has the label `ci-failure-analysis`
+
+These are self-generated pipeline report or CI-tracking issues and do not need triage. Call the `noop` tool with the message: "Skipped: automated pipeline report or CI tracking issue."
 
 - If the event is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
