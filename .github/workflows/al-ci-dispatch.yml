@@ -1,4 +1,4 @@
-# When a PR workflow fails in this repo, opens a tracking issue in BC-Agents and
+# When a PR workflow fails in this repo, opens a tracking issue in skc-bc-internal-agents and
 # dispatches al-ci-fix. Re-dispatches after bot fix commits too (until CI passes).
 # A rolling cap per PR prevents infinite retries — tune MAX_DISPATCHES / WINDOW_DAYS below.
 
@@ -32,17 +32,17 @@ jobs:
       github.event.workflow_run.repository.id == github.repository_id &&
       !github.event.workflow_run.repository.fork
     steps:
-      - name: Extract context and create tracking issue in BC-Agents
+      - name: Extract context and create tracking issue in skc-bc-internal-agents
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
           script: |
             const wr = context.payload.workflow_run;
 
-            // Tracking issues and dispatch always target BC-Agents — NOT the repo
+            // Tracking issues and dispatch always target skc-bc-internal-agents — NOT the repo
             // where this dispatcher is deployed (e.g. Timely).
             const AGENT_OWNER = 'SK-Consulting-S-A';
-            const AGENT_REPO  = 'BC-Agents';
+            const AGENT_REPO  = 'skc-bc-internal-agents';
             const targetRepo  = `${context.repo.owner}/${context.repo.repo}`;
             const prBranch    = wr.head_branch;
 
@@ -71,7 +71,7 @@ jobs:
               return;
             }
 
-            // Rolling cap: count recent ci-failure-analysis issues for this PR in BC-Agents.
+            // Rolling cap: count recent ci-failure-analysis issues for this PR in skc-bc-internal-agents.
             const MAX_DISPATCHES = 15;
             const WINDOW_DAYS = 7;
             const prMarker = `${targetRepo}#${prNumber}`;
@@ -95,7 +95,7 @@ jobs:
                 '',
                 'Please fix the failing workflow manually or inspect the latest run logs.',
                 '',
-                `_BC-Agents \`al-ci-dispatch\` — adjust \`MAX_DISPATCHES\` / \`WINDOW_DAYS\` in that workflow if needed._',
+                `_skc-bc-internal-agents \`al-ci-dispatch\` — adjust \`MAX_DISPATCHES\` / \`WINDOW_DAYS\` in that workflow if needed._',
               ].join('\n');
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -116,7 +116,7 @@ jobs:
               '<!-- ci-analysis-context -->',
               `<!-- ci-dispatch-pr: ${prMarker} -->`,
               'This issue was created automatically by the CI Failure Analysis Dispatcher.',
-              'The BC-Agents CI fix agent will analyse the failure, fix any AL code issues,',
+              'The skc-bc-internal-agents CI fix agent will analyse the failure, fix any AL code issues,',
               'and post a comment on the PR.',
               '',
               '| Field | Value |',
@@ -131,8 +131,8 @@ jobs:
               `| **Run URL** | ${wr.html_url} |`,
             ].join('\n');
 
-            // Create tracking issue in BC-Agents (not the deployed target repo)
-            // so the BC-Agents agents can read it with their native token.
+            // Create tracking issue in skc-bc-internal-agents (not the deployed target repo)
+            // so the skc-bc-internal-agents agents can read it with their native token.
             const { data: issue } = await github.rest.issues.create({
               owner: AGENT_OWNER,
               repo:  AGENT_REPO,
@@ -146,7 +146,7 @@ jobs:
               `for ${targetRepo}#${prNumber}, run ${wr.id}`
             );
 
-            // Dispatch the CI fix agent in BC-Agents.
+            // Dispatch the CI fix agent in skc-bc-internal-agents.
             await github.rest.actions.createWorkflowDispatch({
               owner: AGENT_OWNER,
               repo:  AGENT_REPO,
