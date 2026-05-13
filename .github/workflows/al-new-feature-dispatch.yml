@@ -38,6 +38,25 @@ jobs:
             const isLocal  = (context.repo.repo === AGENT_REPO);
             const issueNumber = context.payload.issue.number;
 
+            // When running in a target repo (not BC-Agents), cross-repo dispatch
+            // requires GH_AW_GITHUB_MCP_SERVER_TOKEN with actions:write on BC-Agents.
+            // The github.token fallback only covers the isLocal case.
+            // Fail fast if the PAT secret is absent from this repo's org secret grant.
+            const patAvailable = Boolean('${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}');
+            if (!isLocal && !patAvailable) {
+              const reason =
+                `GH_AW_GITHUB_MCP_SERVER_TOKEN is not available on ${thisRepo}. ` +
+                `Grant the org secret to this repository: GitHub → ${context.repo.owner} → ` +
+                `Settings → Secrets and variables → Actions → GH_AW_GITHUB_MCP_SERVER_TOKEN → ` +
+                `Repository access → add ${context.repo.repo}. ` +
+                `The PAT must also have Actions → write on ${AGENT_OWNER}/${AGENT_REPO} ` +
+                `(fine-grained PAT: grant Actions → write; classic PAT: add "workflow" scope).`;
+              core.setFailed(reason);
+              core.setOutput('failure_reason', reason);
+              core.setOutput('issue_number', String(issueNumber));
+              return;
+            }
+
             // Guard: skip if the target repo already has an open implementation PR for this issue.
             // Uses the standard branch naming convention feature/<issueNumber>-* from al-new-feature.
             // This is more reliable than cross-referenced timeline events, which false-positive on
@@ -73,25 +92,57 @@ jobs:
               ...(isLocal ? {} : { target_repo: thisRepo }),
             };
 
-            try {
-              await github.rest.actions.createWorkflowDispatch({
-                owner: AGENT_OWNER,
-                repo: AGENT_REPO,
-                ref: 'main',
-                workflow_id: 'al-new-feature.lock.yml',
-                inputs,
-              });
-              core.info(`Dispatched al-new-feature for ${thisRepo}#${issueNumber}`);
-            } catch (err) {
-              const requiredScopes = err.response?.headers?.['x-accepted-github-permissions'] ?? 'actions=write';
-              const reason =
-                `createWorkflowDispatch on ${AGENT_OWNER}/${AGENT_REPO} failed ` +
-                `(HTTP ${err.status ?? '?'}): ${err.message}. ` +
-                `Required scopes: ${requiredScopes}. ` +
-                `GH_AW_GITHUB_MCP_SERVER_TOKEN must have actions:write on ${AGENT_OWNER}/${AGENT_REPO} ` +
-                `(fine-grained PAT: grant Actions → write; classic PAT: add "workflow" scope). ` +
-                `The org-scan weekly batch will still dispatch this issue in the next run, ` +
-                `or an admin can manually dispatch from BC-Agents → Actions → New AL Feature Agent.`;
+            // Retry up to 3 times with exponential back-off to handle transient
+            // 5xx responses from GitHub (known to occur with Node.js 24 native fetch
+            // + octokit-core 5.x, where 500/503 responses surface as "fetch failed").
+            let lastErr;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: AGENT_OWNER,
+                  repo: AGENT_REPO,
+                  ref: 'main',
+                  workflow_id: 'al-new-feature.lock.yml',
+                  inputs,
+                });
+                core.info(`Dispatched al-new-feature for ${thisRepo}#${issueNumber} (attempt ${attempt})`);
+                lastErr = null;
+                break;
+              } catch (err) {
+                lastErr = err;
+                const status = err.status ?? 0;
+                // Retry only on transient server-side or network errors (5xx / no status).
+                // Auth errors (4xx) are permanent — fail immediately.
+                if (status >= 400 && status < 500) break;
+                if (attempt < 3) {
+                  const delay = attempt * 5000;
+                  core.warning(`Attempt ${attempt} failed (HTTP ${status || 'network'}): ${err.message} — retrying in ${delay / 1000}s…`);
+                  await new Promise(r => setTimeout(r, delay));
+                }
+              }
+            }
+
+            if (lastErr) {
+              const status  = lastErr.status ?? 0;
+              const isAuthError = status >= 400 && status < 500;
+              let reason;
+              if (isAuthError) {
+                const requiredScopes = lastErr.response?.headers?.['x-accepted-github-permissions'] ?? 'actions=write';
+                reason =
+                  `createWorkflowDispatch on ${AGENT_OWNER}/${AGENT_REPO} failed ` +
+                  `(HTTP ${status}): ${lastErr.message}. ` +
+                  `Required scopes: ${requiredScopes}. ` +
+                  `GH_AW_GITHUB_MCP_SERVER_TOKEN must have actions:write on ${AGENT_OWNER}/${AGENT_REPO} ` +
+                  `(fine-grained PAT: grant Actions → write; classic PAT: add "workflow" scope). ` +
+                  `The org-scan weekly batch will still dispatch this issue in the next run, ` +
+                  `or an admin can manually dispatch from BC-Agents → Actions → New AL Feature Agent.`;
+              } else {
+                reason =
+                  `createWorkflowDispatch on ${AGENT_OWNER}/${AGENT_REPO} failed after 3 attempts ` +
+                  `(HTTP ${status || 'network error'}): ${lastErr.message}. ` +
+                  `This is likely a transient GitHub API issue — re-labelling the issue will retry the dispatch, ` +
+                  `or wait for the weekly org-scan (Monday 07:30 UTC).`;
+              }
               core.setFailed(reason);
               core.setOutput('failure_reason', reason);
               core.setOutput('issue_number', String(issueNumber));
