@@ -38,7 +38,12 @@ jobs:
         (github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'agent/'))
       ) &&
       github.event.workflow_run.repository.id == github.repository_id &&
-      !github.event.workflow_run.repository.fork
+      !github.event.workflow_run.repository.fork &&
+      !contains(github.event.workflow_run.name, 'Dispatcher') &&
+      !contains(github.event.workflow_run.name, 'Agent') &&
+      !contains(github.event.workflow_run.name, 'Triage') &&
+      !contains(github.event.workflow_run.name, 'Org Scan') &&
+      !contains(github.event.workflow_run.name, 'Auto-assign')
     steps:
       - name: Extract context and create tracking issue in skc-bc-internal-agents
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
