@@ -58,7 +58,7 @@ jobs:
             }
 
             // Guard: skip if the target repo already has an open implementation PR for this issue.
-            // Uses the standard branch naming convention feature/<issueNumber>-* from al-new-feature.
+            // Uses the standard branch naming convention agent/<issueNumber>-* from al-new-feature.
             // This is more reliable than cross-referenced timeline events, which false-positive on
             // any PR in any repo that merely mentions the issue URL (e.g. triage PRs, unrelated fix PRs).
             let openPulls;
@@ -79,7 +79,7 @@ jobs:
                 `Missing pull-requests:read scope on ${thisRepo} — could not deduplicate PR check.`);
               return;
             }
-            const hasLinkedPR = openPulls.some(pr => pr.head.ref.startsWith(`feature/${issueNumber}-`));
+            const hasLinkedPR = openPulls.some(pr => pr.head.ref.startsWith(`agent/${issueNumber}-`));
             if (hasLinkedPR) {
               core.info(
                 `Issue #${issueNumber} already has an open implementation PR — skipping dispatch.`
