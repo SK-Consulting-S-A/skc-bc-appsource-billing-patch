@@ -19,15 +19,10 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     if: |
-      !(
-        (github.actor == 'github-actions[bot]') &&
-        (
-          contains(github.event.issue.title, 'Org Issue Scan') ||
-          contains(github.event.issue.title, 'Triage Report') ||
-          contains(github.event.issue.title, '[agentics]') ||
-          contains(github.event.issue.title, '[agent]')
-        )
-      ) &&
+      !contains(github.event.issue.title, 'Org Issue Scan') &&
+      !contains(github.event.issue.title, 'Triage Report') &&
+      !contains(github.event.issue.title, '[agentics]') &&
+      !contains(github.event.issue.title, '[agent]') &&
       !startsWith(github.event.issue.title, 'CI Failure:') &&
       !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
       !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"')
