@@ -8,10 +8,9 @@ name: "CI Failure Analysis Dispatcher"
 on:
   workflow_run:
     # zizmor: ignore[dangerous-triggers] - secured with same-repo and fork checks below
-    # No branches filter — AL-Go validation may run on pull_request events and,
-    # in some repos, on direct pushes to agent/* branches too. Filtering is done
-    # in the job condition below.
-    workflows: ["*"]
+    # Scoped to the AL-Go CI workflow names so the trigger never fires for
+    # internal dispatchers, triage agents, or other automation workflows.
+    workflows: ["Pull Request Build", "_Build AL-Go project", "CI/CD"]
     types: [completed]
 
 permissions:
