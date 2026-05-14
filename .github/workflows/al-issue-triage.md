@@ -52,7 +52,7 @@ Before doing anything else:
 1. Read the runtime inputs from environment variables and print them first:
    - `echo "Issue number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER"`
    - `echo "Issue action: $AL_ISSUE_TRIAGE_ACTION"`
-2. If `AL_ISSUE_TRIAGE_ISSUE_NUMBER` is empty, call `missing_data` with `data_type: "issue_number"` and stop.
+2. If `AL_ISSUE_TRIAGE_ISSUE_NUMBER` is empty, call `missing_data` with `data_type: "issue_number"` and stop immediately. After a successful `missing_data` tool call, do not continue, do not add narrative text, and do not retry with other tools.
 3. Read that issue explicitly by number from the current repository.
 4. Because this workflow runs via `workflow_dispatch`, **all safe output writes must provide the issue number explicitly**:
    - `update-issue` → always set `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
@@ -73,6 +73,8 @@ Then inspect the issue title, body, and labels.
   - the issue already has the label `ci-failure-analysis`
 
 These are self-generated pipeline report or CI-tracking issues and do not need triage. Call the `noop` tool with the message: "Skipped: automated pipeline report or CI tracking issue."
+
+After the `noop` tool call succeeds for this skip path, stop immediately. Do not continue to later steps, do not make any additional tool calls, and do not add extra narrative output.
 
 - If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
