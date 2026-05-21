@@ -19,3 +19,20 @@ rad.json
 .snapshots/
 cache_*
 ~$*
+
+# Local temporary clones / analysis folders
+*-temp/
+*-customizations-temp/
+
+# Local secret-bearing environment files
+.env
+.env.*
+*.secrets.json
+*.local.json
+
+# Generated diagnostics or migration cache artifacts
+output/
+**/output/
+scripts/*_cache.json
+scripts/*_production.json
+scripts/*.log
