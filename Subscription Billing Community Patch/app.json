@@ -8,6 +8,7 @@
   "privacyStatement": "https://www.skc.lu/privacy/",
   "EULA": "https://www.skc.lu/solveit/eula",
   "help": "https://www.skc.lu/solveit/help/",
+  "contextSensitiveHelpUrl": "https://www.skc.lu/solveit/help/",
   "url": "https://www.skc.lu",
   "logo": "logo.png",
   "dependencies": [
