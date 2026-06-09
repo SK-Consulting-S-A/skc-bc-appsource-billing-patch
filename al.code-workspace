@@ -7,6 +7,9 @@
     {
       "name": "docs",
       "path": "docs"
+    },
+    {
+      "path": "Project Management Patch"
     }
   ],
   "settings": {
