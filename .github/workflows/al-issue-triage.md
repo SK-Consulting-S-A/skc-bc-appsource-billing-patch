@@ -8,7 +8,11 @@ on:
         required: true
         type: string
       issue_action:
-        description: "Original issue event action that triggered triage (opened or reopened)"
+        description: "Original issue event action that triggered triage (opened, reopened, or commented)"
+        required: false
+        type: string
+      comment_id:
+        description: "Issue comment ID when triage was re-triggered by a human reply"
         required: false
         type: string
 permissions:
@@ -39,6 +43,7 @@ network:
 env:
   AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
   AL_ISSUE_TRIAGE_ACTION: ${{ github.event.inputs.issue_action || 'opened' }}
+  AL_ISSUE_TRIAGE_COMMENT_ID: ${{ github.event.inputs.comment_id || '' }}
 ---
 
 # Issue Triage Agent – BC AL
@@ -52,6 +57,7 @@ Before doing anything else:
 1. Read the runtime inputs from environment variables and print them first:
    - `echo "Issue number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER"`
    - `echo "Issue action: $AL_ISSUE_TRIAGE_ACTION"`
+  - `echo "Comment ID  : $AL_ISSUE_TRIAGE_COMMENT_ID"`
 2. If `AL_ISSUE_TRIAGE_ISSUE_NUMBER` is empty, call `missing_data` with `data_type: "issue_number"` and stop immediately. After a successful `missing_data` tool call, do not continue, do not add narrative text, and do not retry with other tools.
 3. Read that issue explicitly by number from the current repository.
 4. Because this workflow runs via `workflow_dispatch`, **all safe output writes must provide the issue number explicitly**:
@@ -77,6 +83,13 @@ These are self-generated pipeline report or CI-tracking issues and do not need t
 After the `noop` tool call succeeds for this skip path, stop immediately. Do not continue to later steps, do not make any additional tool calls, and do not add extra narrative output.
 
 - If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
+
+- If `AL_ISSUE_TRIAGE_ACTION` is `commented` and the issue body already contains `### Context (added by skc-bc-internal-agents triage)`, treat this as a **clarification follow-up**:
+  - read the specific issue comment identified by `AL_ISSUE_TRIAGE_COMMENT_ID` when it is provided
+  - reuse the existing triage context instead of appending a second triage block
+  - re-evaluate classification / priority / `ready-to-implement` using the original issue plus the new human reply
+  - if labels such as `bug`, `enhancement`, `priority: ...`, or `needs-triage` were manually removed, re-apply the correct ones when your updated evaluation still supports them
+  - skip Step 3 body enrichment unless the existing triage context is clearly missing a short clarification that should now be folded into the body
 
 Otherwise, proceed with the steps below.
 
@@ -108,6 +121,8 @@ Read the issue title and body carefully. Note the reporter's exact words — do 
 ---
 
 ## 3. Enrich and Optimise the Issue Body
+
+If `AL_ISSUE_TRIAGE_ACTION` is `commented` and the issue already has the triage context block, do **not** append another `### Context (added by skc-bc-internal-agents triage)` section. Reuse the existing enriched body, and only update it when the new human clarification materially changes the acceptance criteria or the "What needs to change" section.
 
 Using what you found in step 2, rewrite the issue body to make it implementation-ready. Follow these rules:
 
@@ -215,6 +230,19 @@ Post a single comment that includes:
 > If the original acceptance criteria are still valid, applying `ready-to-implement` will queue a new implementation run. If the requirements have changed, please update the issue body before re-applying the label.
 >
 > _Acknowledged by the skc-bc-internal-agents triage pipeline._
+
+**If `AL_ISSUE_TRIAGE_ACTION` is `commented`** and this run was triggered by a human reply to an already-triaged issue, use this follow-up pattern instead of the generic first-triage comment:
+
+> 💬 **Thanks — clarification received.**
+>
+> The triage agent re-checked this issue using your latest reply.
+>
+> - **Updated classification:** `<type>` / `<priority>`
+> - **Status:** `<ready-to-implement applied>` or `<still missing clarification>`
+>
+> If the clarification fully resolves the earlier open questions, mention that the issue is now queued for implementation. Otherwise, state exactly what is still missing.
+>
+> _Follow-up by the skc-bc-internal-agents triage pipeline._
 
 ## Important Rules
 
