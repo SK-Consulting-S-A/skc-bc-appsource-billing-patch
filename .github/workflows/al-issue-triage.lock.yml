@@ -23,14 +23,18 @@
 #
 # Auto-triage new issues for Business Central AL development
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"7b991c7d7cb6398444d1c0ba023d7f539ddf7f2002eb2b9148799162f0b88076","compiler_version":"v0.48.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"d128753ab0467aaba2fc20b9bbc58b6d08545897ef2ba5f000e28348e1e5e0a7","compiler_version":"v0.48.4"}
 
 name: "Issue Triage Agent – BC AL"
 "on":
   workflow_dispatch:
     inputs:
+      comment_id:
+        description: Issue comment ID when triage was re-triggered by a human reply
+        required: false
+        type: string
       issue_action:
-        description: Original issue event action that triggered triage (opened or reopened)
+        description: Original issue event action that triggered triage (opened, reopened, or commented)
         required: false
         type: string
       issue_number:
@@ -47,6 +51,7 @@ run-name: "Issue Triage Agent – BC AL"
 
 env:
   AL_ISSUE_TRIAGE_ACTION: ${{ github.event.inputs.issue_action || 'opened' }}
+  AL_ISSUE_TRIAGE_COMMENT_ID: ${{ github.event.inputs.comment_id || '' }}
   AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
 
 jobs:
