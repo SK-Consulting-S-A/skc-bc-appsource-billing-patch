@@ -6,6 +6,8 @@ name: "Issue Triage Dispatcher"
 on:
   issues:
     types: [opened, reopened]
+  issue_comment:
+    types: [created]
 
 permissions:
   actions: write
@@ -19,13 +21,23 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     if: |
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request == null) &&
+      (github.event_name != 'issue_comment' || github.event.comment.user.type != 'Bot') &&
+      (github.event_name != 'issue_comment' || !contains(github.event.comment.user.login, '[bot]')) &&
       !contains(github.event.issue.title, 'Org Issue Scan') &&
       !contains(github.event.issue.title, 'Triage Report') &&
       !contains(github.event.issue.title, '[agentics]') &&
       !contains(github.event.issue.title, '[agent]') &&
       !startsWith(github.event.issue.title, 'CI Failure:') &&
       !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
-      !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"')
+      !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"') &&
+      (
+        github.event_name != 'issue_comment' ||
+        (
+          contains(github.event.issue.body || '', '### Context (added by skc-bc-internal-agents triage)') &&
+          !contains(toJson(github.event.issue.labels), '"name":"ready-to-implement"')
+        )
+      )
     steps:
       - name: Dispatch issue triage agent
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
@@ -33,6 +45,9 @@ jobs:
           github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
           script: |
             const ref = context.payload.repository.default_branch || 'main';
+            const action = context.eventName === 'issue_comment'
+              ? 'commented'
+              : String(context.payload.action || 'opened');
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -40,7 +55,8 @@ jobs:
               workflow_id: 'al-issue-triage.lock.yml',
               inputs: {
                 issue_number: String(context.issue.number),
-                issue_action: String(context.payload.action || 'opened'),
+                issue_action: action,
+                comment_id: context.payload.comment ? String(context.payload.comment.id) : '',
               },
             });
-            core.info(`Dispatched al-issue-triage for issue #${context.issue.number} (${context.payload.action || 'opened'})`);
+            core.info(`Dispatched al-issue-triage for issue #${context.issue.number} (${action})`);
