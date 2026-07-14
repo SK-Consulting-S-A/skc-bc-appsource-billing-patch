@@ -23,18 +23,18 @@
 #
 # Auto-triage new issues for Business Central AL development
 #
-# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"d128753ab0467aaba2fc20b9bbc58b6d08545897ef2ba5f000e28348e1e5e0a7","compiler_version":"v0.48.4"}
+# gh-aw-metadata: {"schema_version":"v1","frontmatter_hash":"98e903481e3356a2cab7b98b7d700d00e283ef1ee2fdb7a5da3de67653c1a2a3","compiler_version":"v0.48.4"}
 
 name: "Issue Triage Agent – BC AL"
 "on":
   workflow_dispatch:
     inputs:
       comment_id:
-        description: Issue comment ID when triage was re-triggered by a human reply
+        description: Reserved for an optional future comment-specific follow-up trigger
         required: false
         type: string
       issue_action:
-        description: Original issue event action that triggered triage (opened, reopened, or commented)
+        description: Original issue event action that triggered triage (opened, reopened, or clarification-received)
         required: false
         type: string
       issue_number:
@@ -396,7 +396,7 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs
           mkdir -p /tmp/gh-aw/mcp-logs/safeoutputs
           cat > /opt/gh-aw/safeoutputs/config.json << 'GH_AW_SAFE_OUTPUTS_CONFIG_EOF'
-          {"add_comment":{"max":1,"target":"*"},"add_labels":{"allowed":["bug","enhancement","documentation","question","security","needs-triage","priority: critical","priority: high","priority: medium","priority: low","ready-to-implement"],"max":6,"target":"*"},"missing_data":{},"missing_tool":{},"noop":{"max":1},"update_issue":{"max":1}}
+          {"add_comment":{"max":1,"target":"*"},"add_labels":{"allowed":["bug","enhancement","documentation","question","security","needs-triage","priority: critical","priority: high","priority: medium","priority: low","ready-to-implement"],"max":6,"target":"*"},"missing_data":{},"missing_tool":{},"update_issue":{"max":1}}
           GH_AW_SAFE_OUTPUTS_CONFIG_EOF
           cat > /opt/gh-aw/safeoutputs/tools.json << 'GH_AW_SAFE_OUTPUTS_TOOLS_EOF'
           [
@@ -532,23 +532,6 @@ jobs:
               "name": "missing_tool"
             },
             {
-              "description": "Log a transparency message when no significant actions are needed. Use this to confirm workflow completion and provide visibility when analysis is complete but no changes or outputs are required (e.g., 'No issues found', 'All checks passed'). This ensures the workflow produces human-visible output even when no other actions are taken.",
-              "inputSchema": {
-                "additionalProperties": false,
-                "properties": {
-                  "message": {
-                    "description": "Status or completion message to log. Should explain what was analyzed and the outcome (e.g., 'Code review complete - no issues found', 'Analysis complete - all tests passing').",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "message"
-                ],
-                "type": "object"
-              },
-              "name": "noop"
-            },
-            {
               "description": "Report that data or information needed to complete the task is not available. Use this when you cannot accomplish what was requested because required data, context, or information is missing.",
               "inputSchema": {
                 "additionalProperties": false,
@@ -659,17 +642,6 @@ jobs:
                   "type": "string",
                   "sanitize": true,
                   "maxLength": 128
-                }
-              }
-            },
-            "noop": {
-              "defaultMax": 1,
-              "fields": {
-                "message": {
-                  "required": true,
-                  "type": "string",
-                  "sanitize": true,
-                  "maxLength": 65000
                 }
               }
             },
@@ -1009,7 +981,6 @@ jobs:
       issues: write
       pull-requests: write
     outputs:
-      noop_message: ${{ steps.noop.outputs.noop_message }}
       tools_reported: ${{ steps.missing_tool.outputs.tools_reported }}
       total_count: ${{ steps.missing_tool.outputs.total_count }}
     steps:
@@ -1028,20 +999,6 @@ jobs:
           mkdir -p /tmp/gh-aw/safeoutputs/
           find "/tmp/gh-aw/safeoutputs/" -type f -print
           echo "GH_AW_AGENT_OUTPUT=/tmp/gh-aw/safeoutputs/agent_output.json" >> "$GITHUB_ENV"
-      - name: Process No-Op Messages
-        id: noop
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
-        env:
-          GH_AW_AGENT_OUTPUT: ${{ env.GH_AW_AGENT_OUTPUT }}
-          GH_AW_NOOP_MAX: 1
-          GH_AW_WORKFLOW_NAME: "Issue Triage Agent – BC AL"
-        with:
-          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
-          script: |
-            const { setupGlobals } = require('/opt/gh-aw/actions/setup_globals.cjs');
-            setupGlobals(core, github, context, exec, io);
-            const { main } = require('/opt/gh-aw/actions/noop.cjs');
-            await main();
       - name: Record Missing Tool
         id: missing_tool
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -1082,8 +1039,6 @@ jobs:
           GH_AW_WORKFLOW_NAME: "Issue Triage Agent – BC AL"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
-          GH_AW_NOOP_MESSAGE: ${{ steps.noop.outputs.noop_message }}
-          GH_AW_NOOP_REPORT_AS_ISSUE: "true"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
           script: |
