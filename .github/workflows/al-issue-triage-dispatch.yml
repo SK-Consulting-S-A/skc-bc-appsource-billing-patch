@@ -5,9 +5,7 @@ name: "Issue Triage Dispatcher"
 
 on:
   issues:
-    types: [opened, reopened]
-  issue_comment:
-    types: [created]
+    types: [opened, reopened, labeled]
 
 permissions:
   actions: write
@@ -21,9 +19,6 @@ jobs:
   dispatch:
     runs-on: ubuntu-latest
     if: |
-      (github.event_name != 'issue_comment' || github.event.issue.pull_request == null) &&
-      (github.event_name != 'issue_comment' || github.event.comment.user.type != 'Bot') &&
-      (github.event_name != 'issue_comment' || !contains(github.event.comment.user.login, '[bot]')) &&
       !contains(github.event.issue.title, 'Org Issue Scan') &&
       !contains(github.event.issue.title, 'Triage Report') &&
       !contains(github.event.issue.title, '[agentics]') &&
@@ -31,9 +26,11 @@ jobs:
       !startsWith(github.event.issue.title, 'CI Failure:') &&
       !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
       !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"') &&
+      !contains(toJson(github.event.issue.labels), '"name":"implemented"') &&
       (
-        github.event_name != 'issue_comment' ||
+        github.event.action != 'labeled' ||
         (
+          github.event.label.name == 'triage-response' &&
           contains(github.event.issue.body || '', '### Context (added by skc-bc-internal-agents triage)') &&
           !contains(toJson(github.event.issue.labels), '"name":"ready-to-implement"')
         )
@@ -45,8 +42,8 @@ jobs:
           github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
           script: |
             const ref = context.payload.repository.default_branch || 'main';
-            const action = context.eventName === 'issue_comment'
-              ? 'commented'
+            const action = context.payload.action === 'labeled'
+              ? 'clarification-received'
               : String(context.payload.action || 'opened');
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
@@ -56,7 +53,7 @@ jobs:
               inputs: {
                 issue_number: String(context.issue.number),
                 issue_action: action,
-                comment_id: context.payload.comment ? String(context.payload.comment.id) : '',
+                comment_id: '',
               },
             });
             core.info(`Dispatched al-issue-triage for issue #${context.issue.number} (${action})`);
