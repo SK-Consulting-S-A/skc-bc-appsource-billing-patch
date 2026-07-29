@@ -25,6 +25,7 @@ permissionset 70631095 SubBillPatch085SKC
         codeunit SubLineCurrencyFix085SKC = X,
         codeunit SubContractLineSyncClose085SKC = X,
         codeunit SubInvoicePreviewCalc085SKC = X,
+        codeunit SubBillExpectedCalc085SKC = X,
         codeunit InterimBillingMgmt085SKC = X,
         codeunit SubQtyChangeCapture085SKC = X,
         codeunit SubArchiveCloseCheck085SKC = X,

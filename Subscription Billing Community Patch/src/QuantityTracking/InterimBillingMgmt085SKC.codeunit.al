@@ -20,6 +20,8 @@ codeunit 70631064 InterimBillingMgmt085SKC
         NoUnbilledChangesMsg: Label 'No unbilled quantity changes found for contract %1.', Comment = '%1 = Contract No.';
         BillingLinesCreatedMsg: Label '%1 interim billing line(s) created for contract %2. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No.';
         NoBillingArchiveMsg: Label 'Subscription %1 has never been billed. Cannot calculate pro-rata for quantity change on %2.', Comment = '%1 = Subscription No., %2 = Change Date';
+        BillingLinesCreatedWithSkipsMsg: Label '%1 interim billing line(s) created for contract %2. %3 change(s) were skipped because no reliable pro-rata rate could be derived. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No., %3 = Skipped count';
+        CannotComputeProRataMsg: Label 'Subscription %1: no reliable pro-rata rate could be derived for the quantity change on %2, so no interim billing line was created. Check the Billing Base Period, Billing Rhythm and Price on the subscription line.', Comment = '%1 = Subscription No., %2 = Change Date';
         UnbilledChangesExistErr: Label 'Unbilled quantity changes exist for Subscription %1. Run "Create Interim Billing" on contract %2 before creating the regular billing proposal.', Comment = '%1 = Subscription No., %2 = Contract No.';
 
     procedure ProcessContract(CustomerContract: Record "Customer Subscription Contract")
@@ -33,13 +35,15 @@ codeunit 70631064 InterimBillingMgmt085SKC
         SubLine: Record "Subscription Line";
         QtyHistory: Record SubQuantityHistory085SKC;
         BillingLine: Record "Billing Line";
+        ExpectedCalc: Codeunit SubBillExpectedCalc085SKC;
         BillingFrom: Date;
         BillingTo: Date;
-        DaysInPeriod: Integer;
-        DaysToBill: Integer;
+        WindowFrom: Date;
+        WindowTo: Date;
         ProRataUnitPrice: Decimal;
         DeltaAmount: Decimal;
         LineCount: Integer;
+        SkippedCount: Integer;
     begin
         FromDateFilter := NewFromDate;
         ToDateFilter := NewToDate;
@@ -70,16 +74,26 @@ codeunit 70631064 InterimBillingMgmt085SKC
                 repeat
                     if QtyHistory.DeltaQuantity085SKC <> 0 then
                         if FindBillingPeriod(SubLine, QtyHistory.ChangeDate085SKC, BillingFrom, BillingTo) then begin
-                            DaysInPeriod := BillingTo - BillingFrom + 1;
-                            if DaysInPeriod <= 0 then
-                                DaysInPeriod := 1;
-                            DaysToBill := BillingTo - QtyHistory.ChangeDate085SKC + 1;
-                            if QtyHistory.ChangeDate085SKC < BillingFrom then
-                                DaysToBill := DaysInPeriod;
-                            if DaysToBill <= 0 then
-                                DaysToBill := 0;
+                            WindowFrom := QtyHistory.ChangeDate085SKC;
+                            if WindowFrom < BillingFrom then
+                                WindowFrom := BillingFrom;
+                            WindowTo := BillingTo;
 
-                            ProRataUnitPrice := SubLine."Calculation Base Amount" * DaysToBill / DaysInPeriod;
+                            // Derive the rate from the shared calculation so the
+                            // rhythm-to-base-period ratio is honoured. Reading
+                            // "Calculation Base Amount" directly charges a single base
+                            // period regardless of how much of the term remains, which
+                            // under-bills every line whose rhythm exceeds its base period
+                            // (a monthly price billed annually being the common case).
+                            if not ExpectedCalc.ProRataUnitPriceForWindow(
+                                    SubLine, BillingFrom, BillingTo, WindowFrom, WindowTo, ProRataUnitPrice)
+                            then begin
+                                Message(CannotComputeProRataMsg,
+                                    QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
+                                SkippedCount += 1;
+                                continue;
+                            end;
+
                             DeltaAmount := ProRataUnitPrice * QtyHistory.DeltaQuantity085SKC;
 
                             Clear(BillingLine);
@@ -100,10 +114,8 @@ codeunit 70631064 InterimBillingMgmt085SKC
                             BillingLine."Subscription Line Start Date" := SubLine."Subscription Line Start Date";
                             BillingLine."Subscription Line End Date" := SubLine."Subscription Line End Date";
                             BillingLine."Service Object Quantity" := Abs(QtyHistory.DeltaQuantity085SKC);
-                            BillingLine."Billing from" := BillingFrom;
-                            if QtyHistory.ChangeDate085SKC > BillingFrom then
-                                BillingLine."Billing from" := QtyHistory.ChangeDate085SKC;
-                            BillingLine."Billing to" := BillingTo;
+                            BillingLine."Billing from" := WindowFrom;
+                            BillingLine."Billing to" := WindowTo;
                             BillingLine.Amount := DeltaAmount;
                             BillingLine."Unit Price" := ProRataUnitPrice;
                             BillingLine."Billing Rhythm" := SubLine."Billing Rhythm";
@@ -123,7 +135,10 @@ codeunit 70631064 InterimBillingMgmt085SKC
         if LineCount = 0 then
             Message(NoUnbilledChangesMsg, CustomerContract."No.")
         else
-            Message(BillingLinesCreatedMsg, LineCount, CustomerContract."No.");
+            if SkippedCount > 0 then
+                Message(BillingLinesCreatedWithSkipsMsg, LineCount, CustomerContract."No.", SkippedCount)
+            else
+                Message(BillingLinesCreatedMsg, LineCount, CustomerContract."No.");
     end;
 
     local procedure FindBillingPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingFrom: Date; var BillingTo: Date): Boolean
@@ -133,16 +148,23 @@ codeunit 70631064 InterimBillingMgmt085SKC
         BillingFrom := 0D;
         BillingTo := 0D;
 
+        // Only an invoice establishes a period that was actually charged. A credit memo
+        // reverses a period and must not become the basis for a pro-rata rate. Zero-length
+        // periods occur as migration artifacts and would make day weighting meaningless.
         BillingLineArchive.SetRange("Subscription Header No.", SubLine."Subscription Header No.");
         BillingLineArchive.SetRange("Subscription Line Entry No.", SubLine."Entry No.");
         BillingLineArchive.SetRange(Partner, BillingLineArchive.Partner::Customer);
+        BillingLineArchive.SetRange("Document Type", BillingLineArchive."Document Type"::Invoice);
         BillingLineArchive.SetFilter("Billing from", '<=%1', ChangeDate);
         BillingLineArchive.SetFilter("Billing to", '>=%1', ChangeDate);
-        if BillingLineArchive.FindLast() then begin
-            BillingFrom := BillingLineArchive."Billing from";
-            BillingTo := BillingLineArchive."Billing to";
-            exit(true);
-        end;
+        if BillingLineArchive.FindSet() then
+            repeat
+                if BillingLineArchive."Billing to" > BillingLineArchive."Billing from" then begin
+                    BillingFrom := BillingLineArchive."Billing from";
+                    BillingTo := BillingLineArchive."Billing to";
+                    exit(true);
+                end;
+            until BillingLineArchive.Next() = 0;
 
         if SubLine."Next Billing Date" > ChangeDate then begin
             BillingFrom := ChangeDate;
