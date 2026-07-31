@@ -25,18 +25,18 @@
     Entra app client secret.
 
 .PARAMETER TenantId
-    Entra tenant ID or domain (e.g. skc.lu).
+    Entra tenant ID or domain (e.g. contoso.onmicrosoft.com).
 
 .PARAMETER BackupFolder
     Folder to write CSV files. Defaults to ./backups.
 
 .EXAMPLE
     .\Backup-SubscriptionData.ps1 `
-        -BaseUrl "https://api.businesscentral.dynamics.com/v2.0/skc.lu/Production" `
+        -BaseUrl "https://api.businesscentral.dynamics.com/v2.0/00000000-0000-0000-0000-000000000000/Production" `
         -CompanyId "00000000-0000-0000-0000-000000000000" `
         -ClientId "00000000-0000-0000-0000-000000000000" `
         -ClientSecret (Read-Host -AsSecureString "Secret") `
-        -TenantId "skc.lu"
+        -TenantId "contoso.onmicrosoft.com"
 #>
 
 [CmdletBinding()]

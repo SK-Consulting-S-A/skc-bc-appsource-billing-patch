@@ -2,10 +2,12 @@
 
 ## How to file issues and get help
 
-This GitHub repo is auto-generated from https://github.com/microsoft/AL-Go. Issues, bug tracking and feature requests should be done there.
+This project — the **Subscription Billing Community Patch** — is maintained by [SK Consulting S.A.](https://www.skc.lu). It is a community-driven bugfixing and enhancement app for Microsoft Subscription Billing and is not an official Microsoft product.
 
-Please follow the documentation [here](https://github.com/microsoft/AL-Go/blob/main/Scenarios/Contribute.md) if you want to contribute to AL-Go for GitHub.
+- **Bugs and feature requests**: please open a [GitHub issue](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/issues) in this repository.
+- **Questions about usage**: open a [GitHub Discussion](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/discussions) if enabled, or open an issue.
+- **Security issues**: see [SECURITY.md](SECURITY.md) — please do not report these as public issues.
 
-## Microsoft Support Policy
+## Support Policy
 
-Support for this **PROJECT or PRODUCT** is limited to the resources listed above.
+This is a community-maintained extension provided as-is, with support handled on a best-effort basis by SK Consulting S.A. through the channels above. It is built using [AL-Go for GitHub](https://aka.ms/AL-Go); issues with AL-Go itself should instead be filed at [microsoft/AL-Go](https://github.com/microsoft/AL-Go).

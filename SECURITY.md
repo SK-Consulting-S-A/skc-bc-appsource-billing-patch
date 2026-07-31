@@ -1,41 +1,25 @@
-<!-- BEGIN MICROSOFT SECURITY.MD V0.0.5 BLOCK -->
+# Security
 
-## Security
+## Reporting a Vulnerability
 
-Microsoft takes the security of our software products and services seriously, which includes all source code repositories managed through our GitHub organizations, which include [Microsoft](https://github.com/Microsoft), [Azure](https://github.com/Azure), [DotNet](https://github.com/dotnet), [AspNet](https://github.com/aspnet), [Xamarin](https://github.com/xamarin), and [our GitHub organizations](https://opensource.microsoft.com/).
+This repository is maintained by [SK Consulting S.A.](https://www.skc.lu) and is **not** an official Microsoft product or repository. Do not report vulnerabilities found here to Microsoft's MSRC.
 
-If you believe you have found a security vulnerability in any Microsoft-owned repository that meets [Microsoft's definition of a security vulnerability](<https://docs.microsoft.com/en-us/previous-versions/tn-archive/cc751383(v=technet.10)>), please report it to us as described below.
+If you believe you have found a security vulnerability in this extension, please report it privately rather than opening a public GitHub issue. You can do so by:
 
-## Reporting Security Issues
+- Opening a [private security advisory](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/security/advisories/new) on this repository, or
+- Emailing [security@skc.lu](mailto:security@skc.lu)
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+Please include as much of the following as you can:
 
-Instead, please report them to the Microsoft Security Response Center (MSRC) at [https://msrc.microsoft.com/create-report](https://msrc.microsoft.com/create-report).
-
-If you prefer to submit without logging in, send email to [secure@microsoft.com](mailto:secure@microsoft.com). If possible, encrypt your message with our PGP key; please download it from the [Microsoft Security Response Center PGP Key page](https://www.microsoft.com/en-us/msrc/pgp-key-msrc).
-
-You should receive a response within 24 hours. If for some reason you do not, please follow up via email to ensure we received your original message. Additional information can be found at [microsoft.com/msrc](https://www.microsoft.com/msrc).
-
-Please include the requested information listed below (as much as you can provide) to help us better understand the nature and scope of the possible issue:
-
-- Type of issue (e.g. buffer overflow, SQL injection, cross-site scripting, etc.)
-- Full paths of source file(s) related to the manifestation of the issue
-- The location of the affected source code (tag/branch/commit or direct URL)
-- Any special configuration required to reproduce the issue
+- Type of issue (e.g. permission bypass, data exposure, injection, etc.)
+- Full paths of the source file(s) related to the issue
+- The affected commit/tag/branch or a direct link to the code
 - Step-by-step instructions to reproduce the issue
-- Proof-of-concept or exploit code (if possible)
-- Impact of the issue, including how an attacker might exploit the issue
+- Any special configuration required to reproduce it
+- The potential impact of the issue
 
-This information will help us triage your report more quickly.
+We will acknowledge your report and keep you updated as we investigate and fix the issue.
 
-If you are reporting for a bug bounty, more complete reports can contribute to a higher bounty award. Please visit our [Microsoft Bug Bounty Program](https://microsoft.com/msrc/bounty) page for more details about our active programs.
+## Scope
 
-## Preferred Languages
-
-We prefer all communications to be in English.
-
-## Policy
-
-Microsoft follows the principle of [Coordinated Vulnerability Disclosure](https://www.microsoft.com/en-us/msrc/cvd).
-
-<!-- END MICROSOFT SECURITY.MD BLOCK -->
+This policy covers the AL extension source code and workflows in this repository. Vulnerabilities in Microsoft Dynamics 365 Business Central itself, or in the base **Subscription Billing** app this extension depends on, should be reported to Microsoft via [MSRC](https://msrc.microsoft.com/create-report) instead.
