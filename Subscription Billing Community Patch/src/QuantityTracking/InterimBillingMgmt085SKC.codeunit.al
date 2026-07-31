@@ -1,5 +1,6 @@
 namespace SKC.Subscription;
 
+using Microsoft.Sales.Document;
 using Microsoft.SubscriptionBilling;
 
 codeunit 70631064 InterimBillingMgmt085SKC
@@ -36,6 +37,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
         QtyHistory: Record SubQuantityHistory085SKC;
         BillingLine: Record "Billing Line";
         ExpectedCalc: Codeunit SubBillExpectedCalc085SKC;
+        PendingEntryNos: List of [Integer];
         BillingFrom: Date;
         BillingTo: Date;
         WindowFrom: Date;
@@ -44,6 +46,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
         DeltaAmount: Decimal;
         LineCount: Integer;
         SkippedCount: Integer;
+        PendingEntryNo: Integer;
     begin
         FromDateFilter := NewFromDate;
         ToDateFilter := NewToDate;
@@ -59,77 +62,78 @@ codeunit 70631064 InterimBillingMgmt085SKC
             if not SubLine.Get(ContractLine."Subscription Line Entry No.") then
                 SubLine.Init();
 
-            QtyHistory.SetRange(SubscriptionHeaderNo085SKC, ContractLine."Subscription Header No.");
-            QtyHistory.SetRange(InterimBilled085SKC, false);
-            QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
-            if FromDateFilter <> 0D then
-                QtyHistory.SetFilter(ChangeDate085SKC, '>=%1', FromDateFilter);
-            if ToDateFilter <> 0D then begin
-                if FromDateFilter <> 0D then
-                    QtyHistory.SetFilter(ChangeDate085SKC, '>=%1&<=%2', FromDateFilter, ToDateFilter)
-                else
-                    QtyHistory.SetFilter(ChangeDate085SKC, '<=%1', ToDateFilter);
+            // The entry numbers are collected before anything is written. Writing
+            // Billing Line Entry No. is what removes a row from this very selection,
+            // so modifying it while iterating the filtered set left the link unset -
+            // and the "already interim billed" guard keys on that field, so a re-run
+            // created duplicate interim lines.
+            CollectUnbilledChanges(ContractLine."Subscription Header No.", PendingEntryNos);
+
+            foreach PendingEntryNo in PendingEntryNos do begin
+                if not QtyHistory.Get(PendingEntryNo) then
+                    continue;
+                if QtyHistory.DeltaQuantity085SKC = 0 then
+                    continue;
+                if not FindBillingPeriod(SubLine, QtyHistory.ChangeDate085SKC, BillingFrom, BillingTo) then begin
+                    Message(NoBillingArchiveMsg, QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
+                    continue;
+                end;
+
+                WindowFrom := QtyHistory.ChangeDate085SKC;
+                if WindowFrom < BillingFrom then
+                    WindowFrom := BillingFrom;
+                WindowTo := BillingTo;
+
+                // Derive the rate from the shared calculation so the
+                // rhythm-to-base-period ratio is honoured. Reading
+                // "Calculation Base Amount" directly charges a single base
+                // period regardless of how much of the term remains, which
+                // under-bills every line whose rhythm exceeds its base period
+                // (a monthly price billed annually being the common case).
+                if not ExpectedCalc.ProRataUnitPriceForWindow(
+                        SubLine, BillingFrom, BillingTo, WindowFrom, WindowTo, ProRataUnitPrice)
+                then begin
+                    Message(CannotComputeProRataMsg,
+                        QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
+                    SkippedCount += 1;
+                    continue;
+                end;
+
+                DeltaAmount := ProRataUnitPrice * QtyHistory.DeltaQuantity085SKC;
+
+                Clear(BillingLine);
+                BillingLine."User ID" := CopyStr(UserId(), 1, MaxStrLen(BillingLine."User ID"));
+                BillingLine.Partner := BillingLine.Partner::Customer;
+                BillingLine."Partner No." := CustomerContract."Sell-to Customer No.";
+                BillingLine."Subscription Contract No." := CustomerContract."No.";
+                BillingLine."Subscription Contract Line No." := ContractLine."Line No.";
+                BillingLine."Subscription Header No." := SubLine."Subscription Header No.";
+                BillingLine."Subscription Line Entry No." := SubLine."Entry No.";
+                BillingLine."Subscription Line Description" :=
+                    CopyStr(
+                        StrSubstNo('Interim: %1 %2->%3',
+                            SubLine.Description,
+                            Format(QtyHistory.OldQuantity085SKC, 0, '<Integer>'),
+                            Format(QtyHistory.NewQuantity085SKC, 0, '<Integer>')),
+                        1, MaxStrLen(BillingLine."Subscription Line Description"));
+                BillingLine."Subscription Line Start Date" := SubLine."Subscription Line Start Date";
+                BillingLine."Subscription Line End Date" := SubLine."Subscription Line End Date";
+                BillingLine."Service Object Quantity" := Abs(QtyHistory.DeltaQuantity085SKC);
+                BillingLine."Billing from" := WindowFrom;
+                BillingLine."Billing to" := WindowTo;
+                BillingLine.Amount := DeltaAmount;
+                BillingLine."Unit Price" := ProRataUnitPrice;
+                BillingLine."Billing Rhythm" := SubLine."Billing Rhythm";
+                BillingLine."Currency Code" := SubLine."Currency Code";
+                BillingLine."Discount %" := SubLine."Discount %";
+                BillingLine.Discount := SubLine.Discount;
+                BillingLine.InterimBilling085SKC := true;
+                BillingLine.Insert(true);
+
+                QtyHistory.BillingLineEntryNo085SKC := BillingLine."Entry No.";
+                QtyHistory.Modify(false);
+                LineCount += 1;
             end;
-            if QtyHistory.FindSet() then
-                repeat
-                    if QtyHistory.DeltaQuantity085SKC <> 0 then
-                        if FindBillingPeriod(SubLine, QtyHistory.ChangeDate085SKC, BillingFrom, BillingTo) then begin
-                            WindowFrom := QtyHistory.ChangeDate085SKC;
-                            if WindowFrom < BillingFrom then
-                                WindowFrom := BillingFrom;
-                            WindowTo := BillingTo;
-
-                            // Derive the rate from the shared calculation so the
-                            // rhythm-to-base-period ratio is honoured. Reading
-                            // "Calculation Base Amount" directly charges a single base
-                            // period regardless of how much of the term remains, which
-                            // under-bills every line whose rhythm exceeds its base period
-                            // (a monthly price billed annually being the common case).
-                            if not ExpectedCalc.ProRataUnitPriceForWindow(
-                                    SubLine, BillingFrom, BillingTo, WindowFrom, WindowTo, ProRataUnitPrice)
-                            then begin
-                                Message(CannotComputeProRataMsg,
-                                    QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
-                                SkippedCount += 1;
-                                continue;
-                            end;
-
-                            DeltaAmount := ProRataUnitPrice * QtyHistory.DeltaQuantity085SKC;
-
-                            Clear(BillingLine);
-                            BillingLine."User ID" := CopyStr(UserId(), 1, MaxStrLen(BillingLine."User ID"));
-                            BillingLine.Partner := BillingLine.Partner::Customer;
-                            BillingLine."Partner No." := CustomerContract."Sell-to Customer No.";
-                            BillingLine."Subscription Contract No." := CustomerContract."No.";
-                            BillingLine."Subscription Contract Line No." := ContractLine."Line No.";
-                            BillingLine."Subscription Header No." := SubLine."Subscription Header No.";
-                            BillingLine."Subscription Line Entry No." := SubLine."Entry No.";
-                            BillingLine."Subscription Line Description" :=
-                                CopyStr(
-                                    StrSubstNo('Interim: %1 %2->%3',
-                                        SubLine.Description,
-                                        Format(QtyHistory.OldQuantity085SKC, 0, '<Integer>'),
-                                        Format(QtyHistory.NewQuantity085SKC, 0, '<Integer>')),
-                                    1, MaxStrLen(BillingLine."Subscription Line Description"));
-                            BillingLine."Subscription Line Start Date" := SubLine."Subscription Line Start Date";
-                            BillingLine."Subscription Line End Date" := SubLine."Subscription Line End Date";
-                            BillingLine."Service Object Quantity" := Abs(QtyHistory.DeltaQuantity085SKC);
-                            BillingLine."Billing from" := WindowFrom;
-                            BillingLine."Billing to" := WindowTo;
-                            BillingLine.Amount := DeltaAmount;
-                            BillingLine."Unit Price" := ProRataUnitPrice;
-                            BillingLine."Billing Rhythm" := SubLine."Billing Rhythm";
-                            BillingLine."Currency Code" := SubLine."Currency Code";
-                            BillingLine."Discount %" := SubLine."Discount %";
-                            BillingLine.Discount := SubLine.Discount;
-                            BillingLine.Insert(true);
-
-                            QtyHistory.BillingLineEntryNo085SKC := BillingLine."Entry No.";
-                            QtyHistory.Modify(false);
-                            LineCount += 1;
-                        end else
-                            Message(NoBillingArchiveMsg, QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
-                until QtyHistory.Next() = 0;
         until ContractLine.Next() = 0;
 
         if LineCount = 0 then
@@ -139,6 +143,81 @@ codeunit 70631064 InterimBillingMgmt085SKC
                 Message(BillingLinesCreatedWithSkipsMsg, LineCount, CustomerContract."No.", SkippedCount)
             else
                 Message(BillingLinesCreatedMsg, LineCount, CustomerContract."No.");
+    end;
+
+    /// <summary>
+    /// Snapshots the quantity history rows still awaiting interim billing for one
+    /// subscription, as primary keys rather than a live filtered cursor.
+    /// </summary>
+    local procedure CollectUnbilledChanges(SubscriptionHeaderNo: Code[20]; var EntryNos: List of [Integer])
+    var
+        QtyHistory: Record SubQuantityHistory085SKC;
+    begin
+        Clear(EntryNos);
+        QtyHistory.SetRange(SubscriptionHeaderNo085SKC, SubscriptionHeaderNo);
+        QtyHistory.SetRange(InterimBilled085SKC, false);
+        QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
+        if FromDateFilter <> 0D then
+            QtyHistory.SetFilter(ChangeDate085SKC, '>=%1', FromDateFilter);
+        if ToDateFilter <> 0D then
+            if FromDateFilter <> 0D then
+                QtyHistory.SetFilter(ChangeDate085SKC, '>=%1&<=%2', FromDateFilter, ToDateFilter)
+            else
+                QtyHistory.SetFilter(ChangeDate085SKC, '<=%1', ToDateFilter);
+        QtyHistory.SetLoadFields(EntryNo085SKC);
+        if QtyHistory.FindSet() then
+            repeat
+                EntryNos.Add(QtyHistory.EntryNo085SKC);
+            until QtyHistory.Next() = 0;
+    end;
+
+    /// <summary>
+    /// Keeps an interim charge billing only the quantity that was added.
+    ///
+    /// Codeunit 8060 builds the sales line with
+    /// <c>SalesLine.Validate(Quantity, GetSign() * ServiceObject.Quantity)</c>, so
+    /// it takes the subscription's current quantity and recomputes the amount from
+    /// it. For an interim charge that is wrong twice over: the pre-existing
+    /// quantity is billed a second time for the remainder of a period it was
+    /// already paid for, and the amount calculated by interim billing is discarded.
+    ///
+    /// Several billing lines for one subscription line are aggregated into a single
+    /// temporary line with their unit prices summed, so the correction is applied
+    /// only where the temporary line stands for exactly one billing line and that
+    /// line is an interim charge. Anything aggregated is left to standard behaviour
+    /// rather than guessed at.
+    /// </summary>
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Create Billing Documents", 'OnBeforeInsertSalesLineFromContractLine', '', false, false)]
+    local procedure PreserveInterimQuantityOnBeforeInsertSalesLine(var SalesLine: Record "Sales Line"; var TempBillingLine: Record "Billing Line" temporary)
+    var
+        BillingLine: Record "Billing Line";
+        Sign: Integer;
+    begin
+        if not IsInterimBillingEnabled() then
+            exit;
+
+        BillingLine.SetRange("Subscription Contract No.", TempBillingLine."Subscription Contract No.");
+        BillingLine.SetRange("Subscription Line Entry No.", TempBillingLine."Subscription Line Entry No.");
+        BillingLine.SetRange("Billing from", TempBillingLine."Billing from");
+        BillingLine.SetRange("Billing to", TempBillingLine."Billing to");
+        BillingLine.SetRange(Rebilling, TempBillingLine.Rebilling);
+        if BillingLine.Count() <> 1 then
+            exit;
+        BillingLine.FindFirst();
+
+        if not BillingLine.InterimBilling085SKC then
+            exit;
+        if BillingLine."Service Object Quantity" = 0 then
+            exit;
+        if SalesLine.Quantity = BillingLine."Service Object Quantity" then
+            exit;
+
+        // GetSign on Billing Line is internal, so the direction already applied by
+        // standard code is reused rather than recomputed.
+        Sign := 1;
+        if SalesLine.Quantity < 0 then
+            Sign := -1;
+        SalesLine.Validate(Quantity, Sign * BillingLine."Service Object Quantity");
     end;
 
     local procedure FindBillingPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingFrom: Date; var BillingTo: Date): Boolean
