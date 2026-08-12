@@ -84,6 +84,59 @@ jobs:
               return;
             }
 
+            // AL-Go deployment failures are environment problems (auth, version
+            // conflict, schema sync) that the AL code-fix agent cannot resolve.
+            const runJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: wr.id,
+              per_page: 100,
+            });
+            const failedJobs = runJobs.filter((j) => j.conclusion === 'failure');
+            const deploymentOnly =
+              failedJobs.length > 0 && failedJobs.every((j) => /^deploy\b/i.test(j.name.trim()));
+
+            if (deploymentOnly) {
+              const failedNames = failedJobs.map((j) => j.name).join(', ');
+              core.warning(
+                `Only deployment job(s) failed (${failedNames}) for ${targetRepo}#${prNumber} — ` +
+                `skipping code-fix dispatch; this needs environment attention, not an AL code change.`
+              );
+
+              const deployMarker = `<!-- al-deploy-failure: ${wr.head_sha} -->`;
+              const prComments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              });
+              if (prComments.some((c) => c.body?.includes(deployMarker))) {
+                core.info('Deployment failure already reported for this commit — skipping comment.');
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: [
+                  deployMarker,
+                  '## 🚧 Deployment failed — build and tests passed',
+                  '',
+                  `The \`${wr.name}\` run failed **only** in deployment: \`${failedNames}\`.`,
+                  '',
+                  'No automatic code fix was queued, because this is an environment issue rather than an AL code defect.',
+                  'Typical causes are an expired environment AuthContext, an app version conflict, or a schema sync',
+                  'conflict when several branches deploy to the same sandbox.',
+                  '',
+                  `**Run:** ${wr.html_url}`,
+                  '',
+                  '_skc-bc-internal-agents `al-ci-dispatch`._',
+                ].join('\n'),
+              }).catch((e) => core.warning(`Could not post deployment comment: ${e.message}`));
+              return;
+            }
+
             const prMarker = `${targetRepo}#${prNumber}`;
             const headShaMarker = `<!-- ci-dispatch-head-sha: ${wr.head_sha} -->`;
 
