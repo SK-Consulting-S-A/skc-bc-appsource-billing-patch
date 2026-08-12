@@ -30,7 +30,15 @@ safe-outputs:
   add-labels:
     max: 6
     target: "*"
-    allowed: [bug, enhancement, documentation, question, security, needs-triage, "priority: critical", "priority: high", "priority: medium", "priority: low", ready-to-implement]
+    allowed: [documentation, question, security, needs-triage, ready-to-implement]
+  set-issue-type:
+    max: 1
+    target: "*"
+    allowed: ["Bug", "Feature", "Task"]
+  set-issue-field:
+    max: 1
+    target: "*"
+    allowed-fields: [Priority]
   add-comment:
     max: 1
     target: "*"
@@ -66,6 +74,8 @@ Before doing anything else:
 4. Because this workflow runs via `workflow_dispatch`, **all safe output writes must provide the issue number explicitly**:
    - `update-issue` → always set `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
    - `add-labels` → always set `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
+   - `set_issue_field` → always set `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
+   - `set_issue_type` → always set `issue_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
    - `add-comment` → always set `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER`
 
 Then inspect the issue title, body, and labels.
@@ -84,13 +94,13 @@ Then inspect the issue title, body, and labels.
 
 These are self-generated pipeline report, CI-tracking, or already-implemented issues and do not need triage. Stop immediately without calling a safe-output tool, adding a comment, or adding narrative output.
 
-- If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has a type label (`bug`, `enhancement`, `documentation`, `question`, `security`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
+- If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has an issue type set (`Bug`, `Feature`, or `Task`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
 - If `AL_ISSUE_TRIAGE_ACTION` is `clarification-received` and the issue body already contains `### Context (added by skc-bc-internal-agents triage)`, treat this as a **clarification follow-up**:
   - read the latest human comments after the prior triage acknowledgement
   - reuse the existing triage context instead of appending a second triage block
   - re-evaluate classification / priority / `ready-to-implement` using the original issue plus the new human reply
-  - if labels such as `bug`, `enhancement`, `priority: ...`, or `needs-triage` were manually removed, re-apply the correct ones when your updated evaluation still supports them
+  - if the issue type or labels such as `documentation`, `question`, or `needs-triage` were manually removed, re-apply the correct ones when your updated evaluation still supports them, and re-set the `Priority` field if it was cleared
   - skip Step 3 body enrichment unless the existing triage context is clearly missing a short clarification that should now be folded into the body
 
 Otherwise, proceed with the steps below.
@@ -162,30 +172,44 @@ Based on the original text **and** the source research, identify:
 
 - The **type** of the issue (bug, feature request, documentation, question, security, performance).
 - The **affected area / module** — use the folder containing the AL file found in step 2.
-- The **priority** based on business impact:
-  - **critical** – core business process is broken, data loss, or security vulnerability
-  - **high** – a main feature is not working correctly
-  - **medium** – minor functional issue or improvement request
-  - **low** – cosmetic, documentation, or minor enhancement
+- The **priority** based on business impact, expressed as a `Priority` field value:
+  - **Urgent** – core business process is broken, data loss, or security vulnerability
+  - **High** – a main feature is not working correctly
+  - **Medium** – minor functional issue or improvement request
+  - **Low** – cosmetic, documentation, or minor enhancement
 
 ---
 
-## 5. Apply Labels
+## 5. Apply Type, Labels and Priority
 
-Apply the appropriate labels based on your analysis:
+### Issue type (set one)
 
-### Type labels (apply one)
-- `bug` – something is broken or behaving incorrectly
-- `enhancement` – new feature or improvement request
+Type is a structured GitHub issue type, not a label. Call `set_issue_type` once:
+
+```json
+{ "type": "set_issue_type", "issue_number": <AL_ISSUE_TRIAGE_ISSUE_NUMBER>, "issue_type": "Bug" }
+```
+
+- `Bug` – something is broken or behaving incorrectly
+- `Feature` – new feature or improvement request
+- `Task` – documentation, question, or other work that is neither a defect nor a new feature
+
+### Topic labels (apply any that fit)
 - `documentation` – documentation update needed
 - `question` – needs clarification or information
 - `security` – potential security concern
 
-### Priority labels (apply one)
-- `priority: critical`
-- `priority: high`
-- `priority: medium`
-- `priority: low`
+Do **not** add `bug` or `enhancement` labels — they are superseded by the issue type.
+
+### Priority field (set one)
+
+Priority is a structured issue field, not a label. Call `set_issue_field` once:
+
+```json
+{ "type": "set_issue_field", "issue_number": <AL_ISSUE_TRIAGE_ISSUE_NUMBER>, "field_name": "Priority", "value": "High" }
+```
+
+Allowed values are `Urgent`, `High`, `Medium`, and `Low`. Do **not** add `priority: *` labels — they are superseded by this field.
 
 Always provide `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER` explicitly when adding labels.
 
@@ -195,7 +219,7 @@ Always provide `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER` explicitly when addi
 
 Evaluate whether the issue (after enrichment) is ready for automatic AL code implementation by checking **all** of the following:
 
-- The type is `enhancement` or `bug`
+- The issue type is `Feature` or `Bug`
 - The enriched issue body has a **clear, unambiguous description** of what needs to be done
 - The expected behaviour or desired outcome is explicitly described (either by the reporter or filled in by step 3)
 - There are no open questions that require human input before work can begin
@@ -214,7 +238,7 @@ Post a single comment that includes:
 
 1. A brief summary referencing the actual AL object found (e.g. "This affects `Page 50100 ECDF Declaration Wizard`").
 2. The classification applied.
-3. If it is a **bug**: ask for BC version and steps to reproduce if still missing after enrichment.
+3. If the issue type is **Bug**: ask for BC version and steps to reproduce if still missing after enrichment.
 4. If `ready-to-implement` was applied: mention that it is queued for automatic implementation and a PR will be opened shortly.
 5. If `ready-to-implement` was **not** applied: state exactly what is still missing.
 6. If the description was inferred from source (brief original): mention this and ask the reporter to confirm the interpretation in the issue body.
