@@ -1,0 +1,59 @@
+name: Require linked issue
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  linked-issue:
+    name: linked-issue
+    runs-on: ubuntu-latest
+    if: >
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      github.actor != 'renovate[bot]' &&
+      !startsWith(github.head_ref, 'update-al-go-system-files')
+    steps:
+      - name: Fail when the pull request is not linked to an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          payload="$(gh api graphql -f query="
+            query(\$owner: String!, \$name: String!, \$number: Int!) {
+              repository(owner: \$owner, name: \$name) {
+                pullRequest(number: \$number) {
+                  title
+                  body
+                  closingIssuesReferences(first: 20) {
+                    nodes { number }
+                  }
+                }
+              }
+            }" -F owner="$OWNER" -F name="$REPO" -F number="$PR_NUMBER")"
+
+          linked="$(printf '%s' "$payload" | jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[].number] | length')"
+          title="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.title // ""')"
+          body="$(printf '%s' "$payload" | jq -r '.data.repository.pullRequest.body // ""')"
+          text="${title}"$'\n'"${body}"
+
+          if [ "$linked" -gt 0 ]; then
+            echo "Linked closing issue(s) found."
+            exit 0
+          fi
+
+          if printf '%s' "$text" | grep -Eiq '(^|[[:space:]])((close[sd]?|fix(e[sd])?|resolve[sd]?))[[:space:]]+#[[:digit:]]+'; then
+            echo "Closing keyword with issue number found in title or body."
+            exit 0
+          fi
+
+          echo "::error::Pull requests must reference a GitHub issue (for example 'Fixes #123'). Open an issue first — see CONTRIBUTING.md."
+          exit 1

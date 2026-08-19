@@ -104,3 +104,19 @@ A single assignable permission set (`SubBillPatch003SKC`) covers all custom tabl
 ## Build & CI/CD
 
 This project uses [AL-Go for GitHub](https://aka.ms/AL-Go) for continuous integration and delivery.
+
+## Contributing
+
+Community contributions are welcome. **Open a GitHub issue first**, then send a
+pull request from a fork. Maintainers review every pull request before merge.
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Support](SUPPORT.md)
+- [Security policy](SECURITY.md)
+- Privacy / DPO: [dpo@skc.lu](mailto:dpo@skc.lu)
+- General contact: [info@skc.lu](mailto:info@skc.lu)
+
+## License
+
+This repository is licensed under the [MIT License](LICENSE).
