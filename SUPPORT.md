@@ -7,6 +7,8 @@ This project — the **Subscription Billing Community Patch** — is maintained 
 - **Bugs and feature requests**: open a [GitHub issue](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/issues/new/choose) using the templates. A pull request must reference that issue (`Fixes #nnn`). See [CONTRIBUTING.md](CONTRIBUTING.md).
 - **Questions about usage**: open a [GitHub Discussion](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/discussions). Do not use issues for how-to questions.
 - **Security issues**: see [SECURITY.md](SECURITY.md) — please do not report these as public issues.
+- **Privacy / personal data (DPO)**: [dpo@skc.lu](mailto:dpo@skc.lu)
+- **General contact**: [info@skc.lu](mailto:info@skc.lu)
 
 ## Support Policy
 

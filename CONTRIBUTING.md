@@ -15,6 +15,8 @@ Please also follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 | Ask a usage question | [GitHub Discussions](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/discussions) |
 | Propose a code or docs change | A pull request **from a fork**, linked to an issue |
 | Report a security vulnerability | [SECURITY.md](SECURITY.md) — do **not** open a public issue |
+| Privacy / personal-data question | [dpo@skc.lu](mailto:dpo@skc.lu) |
+| Anything else (general) | [info@skc.lu](mailto:info@skc.lu) |
 
 Direct pushes to `main` are blocked. Maintainers review and squash-merge
 approved pull requests.

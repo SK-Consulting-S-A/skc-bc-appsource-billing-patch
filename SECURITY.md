@@ -7,7 +7,9 @@ This repository is maintained by [SK Consulting S.A.](https://www.skc.lu) and is
 If you believe you have found a security vulnerability in this extension, please report it privately rather than opening a public GitHub issue. You can do so by:
 
 - Opening a [private security advisory](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/security/advisories/new) on this repository, or
-- Emailing [security@skc.lu](mailto:security@skc.lu)
+- Emailing [info@skc.lu](mailto:info@skc.lu)
+
+Personal-data or privacy concerns (GDPR / DPO) should go to [dpo@skc.lu](mailto:dpo@skc.lu), not to a public issue.
 
 Please include as much of the following as you can:
 

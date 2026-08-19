@@ -114,6 +114,8 @@ pull request from a fork. Maintainers review every pull request before merge.
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
+- Privacy / DPO: [dpo@skc.lu](mailto:dpo@skc.lu)
+- General contact: [info@skc.lu](mailto:info@skc.lu)
 
 ## License
 
