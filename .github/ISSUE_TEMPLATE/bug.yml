@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work as expected in this extension.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the Subscription Billing Community Patch.
+        Security issues must be reported privately — see [SECURITY.md](https://github.com/SK-Consulting-S-A/skc-bc-appsource-billing-patch/blob/main/SECURITY.md).
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps a maintainer can follow.
+      placeholder: |
+        1. Open …
+        2. Set …
+        3. Observe …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: input
+    id: bc-version
+    attributes:
+      label: Business Central version
+      description: For example BC 27.0 or BC 28.0 (SaaS or on-premises).
+      placeholder: "BC 28.0 SaaS"
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: Community Patch version
+      description: App version from Extension Management, or `main` if you built from source.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment notes
+      description: Subscription Billing app version, relevant setup, and whether this is reproducible in a Cronus/demo company.
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, event viewer / telemetry snippets, or related Microsoft bugs. Redact customer data.

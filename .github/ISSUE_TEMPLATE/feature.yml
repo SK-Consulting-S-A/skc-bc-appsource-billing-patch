@@ -1,0 +1,38 @@
+name: Feature request
+description: Propose an enhancement to this extension.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first. Maintainers triage requests before implementation.
+        A pull request for this change must link back to this issue (`Fixes #nnn`).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is painful or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should the extension behave after the change?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Standard Subscription Billing behaviour, workarounds, or other designs.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This belongs in the Community Patch (bugfix or enhancement of Microsoft Subscription Billing), not in a per-customer PTE.
+          required: true
+        - label: I am willing to implement this in a pull request after maintainers agree on the approach.
+          required: false
