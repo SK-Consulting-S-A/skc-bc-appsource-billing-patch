@@ -92,6 +92,28 @@ pageextension 70631091 ServiceCommitments085SKC extends "Service Commitments"
                 ToolTip = 'Indicates whether this subscription line has been closed.';
                 Editable = false;
             }
+            field(DeferralMethod085SKC; Rec.DeferralMethod085SKC)
+            {
+                ApplicationArea = All;
+            }
+            field(EffectiveDeferralMethod085SKC; EffectiveDeferralMethod)
+            {
+                ApplicationArea = All;
+                Caption = 'Effective Deferral Method';
+                Editable = false;
+                ToolTip = 'Specifies the method that actually applies once Setup Default has been resolved against the company default.';
+            }
+            field(DynDeferralTemplate085SKC; Rec.DynDeferralTemplate085SKC)
+            {
+                ApplicationArea = All;
+            }
+            field(EffectiveDeferralTemplate085SKC; EffectiveDeferralTemplate)
+            {
+                ApplicationArea = All;
+                Caption = 'Effective Deferral Template';
+                Editable = false;
+                ToolTip = 'Specifies the deferral template that would be used, resolved from this line, the invoicing item, and finally the fallback in Subscription Contract Setup.';
+            }
         }
         addafter("Initial Term")
         {
@@ -211,7 +233,11 @@ pageextension 70631091 ServiceCommitments085SKC extends "Service Commitments"
     end;
 
     trigger OnAfterGetRecord()
+    var
+        DeferralMgmt: Codeunit DynSubDeferralMgmt085SKC;
     begin
+        EffectiveDeferralMethod := DeferralMgmt.GetEffectiveMethod(Rec);
+        EffectiveDeferralTemplate := DeferralMgmt.ResolveTemplateCode(Rec);
         NextBillingDateEditable := Rec."Next Billing Date";
         NextBillingDateStyle := '';
         NextInvoiceAmount := CalcPreviewCalc.CalcNextInvoiceAmount(
@@ -326,7 +352,9 @@ pageextension 70631091 ServiceCommitments085SKC extends "Service Commitments"
 
     var
         CalcPreviewCalc: Codeunit SubInvoicePreviewCalc085SKC;
+        EffectiveDeferralMethod: Enum SubDeferralMethod085SKC;
         HideCalcBasePercent085SKC: Boolean;
+        EffectiveDeferralTemplate: Code[10];
         NextInvoiceAmount: Decimal;
         VendorCostLCY: Decimal;
         MarginPct: Decimal;

@@ -71,6 +71,43 @@ Maintenance codeunits for fixing data inconsistencies and consolidating contract
 - **Contract Line Sync** — synchronizes closed state between subscription lines and their customer contract lines, clearing orphaned next billing dates.
 - **Currency Fix** — repairs subscription lines with missing currency factors: clears LCY-like codes or recalculates foreign currency factors from exchange rates and recomputes LCY amount fields.
 
+### Dynamic Standard Deferrals
+
+Recognises subscription revenue and cost through standard Business Central
+deferral schedules whose periods follow the billing period exactly, instead of
+through contract deferrals that only reach profit and loss when the release
+report is run each month.
+
+A standard deferral template fixes the number of periods, but a subscription
+line carries its own Billing from/to on every invoice. The schedule is therefore
+rebuilt from those two dates whenever the amount, the discount, or the period
+changes; the template supplies only the deferral account and the description.
+The whole future-dated schedule is then written by standard posting inside the
+invoice transaction, so nothing recurring can be forgotten.
+
+- **Deferral method per line** — `Setup Default`, `Subscription Deferral`,
+  `Standard Dynamic`, or `No Deferral`, resolved against a company default in
+  Subscription Contract Setup. The default is `Subscription Deferral`, so
+  installing the extension changes nothing until the method is switched.
+- **Dynamic deferral templates** — a flag on the standard Deferral Template that
+  hands period calculation to the billing period and locks the calculation
+  method, start date, and period count that it overrides.
+- **Template resolution** — the line override first, then the invoicing item's
+  default deferral template, then a customer or vendor fallback in setup.
+- **Exact period geometry** — a partial first or last month is prorated by day,
+  whole months in between are equal, and the final period absorbs the rounding
+  so the schedule always totals the document line.
+- **Mutual exclusion** — selecting the dynamic engine switches
+  `Create Contract Deferrals` off, and posting is blocked if a line would still
+  run both engines and defer the same amount twice.
+- **Customer and vendor, invoices and credit memos** — the method is stamped on
+  the billing proposal, carried into the document and the archive, and rebuilt
+  immediately before posting from the current amounts.
+- **Simulation, rebuild, and audit** — calculate a schedule for any period and
+  amount without a document, rebuild the schedules on a draft document, or check
+  posted schedules against their line totals and against leftover contract
+  deferral rows.
+
 ### Page Extensions
 
 Extends standard Subscription Billing pages with additional fields and actions.
@@ -79,10 +116,14 @@ Extends standard Subscription Billing pages with additional fields and actions.
 - **Customer Contract Line Subpage** — Next Invoice Amount, Subscription Closed indicator, Open Subscription action
 - **Customer Contract** — Create Interim Billing action
 - **Service Object** — Quantity history assist-edit and list part
+- **Subscription Contract Setup** — default deferral method, customer and vendor
+  dynamic deferral templates, and the dynamic deferral analysis log
+- **Deferral Template Card and List** — Dynamic Subscription Schedule toggle,
+  with the fields it overrides locked while it is on
 
 ### API Surfaces
 
-Eleven OData v4 API pages under `skconsulting/subscriptionBilling/v1.0` for external integrations and migration tooling.
+Seventeen OData v4 API pages under `skconsulting/subscriptionBilling/v1.0` for external integrations and migration tooling.
 
 | Endpoint | Source Table | Access |
 |----------|-------------|--------|
@@ -96,10 +137,25 @@ Eleven OData v4 API pages under `skconsulting/subscriptionBilling/v1.0` for exte
 | `customerSubscriptionContractDeferrals` | Cust. Sub. Contract Deferral | Read-only |
 | `subscriptionLineArchives` | Subscription Line Archive | Insert / Delete |
 | `importedSubscriptionLines` | Imported Subscription Line | Full CRUD |
+| `dynamicDeferralSetups` | Subscription Contract Setup | Read / Modify |
+| `dynamicDeferralTemplates` | Deferral Template | Read / Insert / Modify |
+| `dynamicDeferralHeaders` | Deferral Header | Read-only |
+| `dynamicDeferralLines` | Deferral Line | Read-only |
+| `dynamicDeferralAnalyses` | Dynamic Deferral Analysis | Read-only |
+| `dynamicDeferralTools` | Subscription Contract Setup | Actions only |
+
+`dynamicDeferralTools` exposes three bound actions. Each returns a run
+identifier in `lastRunId`; read the detail from `dynamicDeferralAnalyses`.
+
+| Action | Body | Effect |
+|--------|------|--------|
+| `simulateSchedule` | `billingFrom`, `billingTo`, `totalAmount`, `currencyCode` | Calculates a schedule without touching a document |
+| `rebuildDocument` | `isSales`, `documentType`, `documentNo` | Rebuilds the dynamic schedules on one draft document |
+| `auditDeferrals` | `fromDate`, `toDate`, `documentNoFilter` | Compares posted schedules against their line totals |
 
 ### Permissions
 
-A single assignable permission set (`SubBillPatch003SKC`) covers all custom tables, codeunits, pages, and API pages included in the extension.
+A single assignable permission set (`SubBillPatch085SKC`) covers all custom tables, codeunits, pages, and API pages included in the extension.
 
 ## Build & CI/CD
 

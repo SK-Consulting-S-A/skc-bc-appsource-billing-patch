@@ -1,5 +1,6 @@
 namespace SKC.Subscription;
 
+using Microsoft.Finance.Deferral;
 using Microsoft.SubscriptionBilling;
 
 /// <summary>
@@ -20,6 +21,21 @@ tableextension 70631053 BillingLine085SKC extends "Billing Line"
             Caption = 'Interim Billing';
             DataClassification = SystemMetadata;
             Editable = false;
+        }
+        field(70631120; DeferralMethod085SKC; Enum SubDeferralMethod085SKC)
+        {
+            Caption = 'Deferral Method';
+            DataClassification = SystemMetadata;
+            Editable = false;
+            ToolTip = 'Specifies the deferral engine resolved for this proposal line. The value is stamped when the line is created so that the proposal, the document, and the posted schedule can be compared afterwards.';
+        }
+        field(70631121; DynDeferralTemplate085SKC; Code[10])
+        {
+            Caption = 'Dynamic Deferral Template';
+            DataClassification = SystemMetadata;
+            Editable = false;
+            TableRelation = "Deferral Template"."Deferral Code";
+            ToolTip = 'Specifies the deferral template resolved for this proposal line.';
         }
     }
 }
