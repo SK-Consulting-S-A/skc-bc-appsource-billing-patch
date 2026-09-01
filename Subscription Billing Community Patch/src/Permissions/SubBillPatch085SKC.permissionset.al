@@ -1,5 +1,10 @@
 namespace SKC.Subscription;
 
+using Microsoft.Finance.Deferral;
+using Microsoft.Purchases.Document;
+using Microsoft.Purchases.History;
+using Microsoft.Sales.Document;
+using Microsoft.Sales.History;
 using Microsoft.SubscriptionBilling;
 
 permissionset 70631095 SubBillPatch085SKC
@@ -45,5 +50,31 @@ permissionset 70631095 SubBillPatch085SKC
         page apiCustBillLineArch085SKC = X,
         page apiSubHeaders085SKC = X,
         page apiSubLineArchive085SKC = X,
-        page apiCustContractDeferrals085SKC = X;
+        page apiCustContractDeferrals085SKC = X,
+        table DynDeferralAnalysis085SKC = X,
+        tabledata DynDeferralAnalysis085SKC = RIMD,
+        tabledata "Deferral Header" = RIMD,
+        tabledata "Deferral Line" = RIMD,
+        tabledata "Deferral Template" = RIMD,
+        tabledata "Posted Deferral Header" = R,
+        tabledata "Posted Deferral Line" = R,
+        tabledata "Purch. Cr. Memo Line" = R,
+        tabledata "Purch. Inv. Line" = R,
+        tabledata "Purchase Line" = RM,
+        tabledata "Sales Cr.Memo Line" = R,
+        tabledata "Sales Invoice Line" = R,
+        tabledata "Sales Line" = RM,
+        tabledata "Cust. Sub. Contract Deferral" = R,
+        tabledata "Vend. Sub. Contract Deferral" = R,
+        codeunit DynSubDeferralApply085SKC = X,
+        codeunit DynSubDeferralMgmt085SKC = X,
+        codeunit DynSubDeferralTools085SKC = X,
+        page DynDeferralAnalyses085SKC = X,
+        page DynDeferralSimulate085SKC = X,
+        page apiDynDeferralAnalysis085SKC = X,
+        page apiDynDeferralHeaders085SKC = X,
+        page apiDynDeferralLines085SKC = X,
+        page apiDynDeferralSetup085SKC = X,
+        page apiDynDeferralTemplates085SKC = X,
+        page apiDynDeferralTools085SKC = X;
 }
