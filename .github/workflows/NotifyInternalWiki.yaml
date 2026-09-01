@@ -1,0 +1,24 @@
+name: Notify internal wiki
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows:
+      - ' Publish To Environment'
+      - 'Create release'
+      - ' Create release'
+    types: [completed]
+  workflow_dispatch:
+jobs:
+  notify:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GHTOKENWORKFLOW }}
+        run: |
+          gh api repos/SK-Consulting-S-A/skc-web-internal-al-wiki/dispatches \
+            -f event_type=prod-artifact-published \
+            -f "client_payload[repo]=${{ github.repository }}" \
+            -f "client_payload[tag]=${{ github.event.release.tag_name }}" \
+            -f "client_payload[sha]=${{ github.sha }}"
