@@ -8,5 +8,10 @@
     "Subscription Billing Community Patch"
   ],
   "testFolders": [],
-  "bcptTestFolders": []
+  "bcptTestFolders": [],
+  "deliverToAppSource": {
+    "productId": "61ae29d7-c99c-4f0d-bb4a-a932416a0e72",
+    "continuousDelivery": false,
+    "mainAppFolder": "Subscription Billing Community Patch"
+  }
 }
