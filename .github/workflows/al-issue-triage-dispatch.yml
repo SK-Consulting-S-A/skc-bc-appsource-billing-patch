@@ -3,6 +3,11 @@ name: "Issue Triage Dispatcher"
 # Lightweight, deterministic gate for issue triage. The event path handles new
 # work quickly; the scheduled sweep is a bounded recovery net for dispatches
 # lost to transient GitHub failures or dropped webhooks.
+#
+# gh-aw health reports ([aw] titles, agentic-workflows label, or the
+# gh-aw-failure-issue HTML comment) are not AL work. Skip them here so the
+# triage agent is never asked to no-op: noop is disabled, and a missing-tool
+# report would open another [aw] issue.
 
 on:
   issues:
@@ -51,12 +56,15 @@ jobs:
       github.event_name == 'issues' &&
       !contains(github.event.issue.title, 'Org Issue Scan') &&
       !contains(github.event.issue.title, 'Triage Report') &&
+      !startsWith(github.event.issue.title, '[aw]') &&
       !contains(github.event.issue.title, '[agentics]') &&
       !contains(github.event.issue.title, '[agent]') &&
       !startsWith(github.event.issue.title, 'CI Failure:') &&
       !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
+      !contains(github.event.issue.body || '', '<!-- gh-aw-failure-issue') &&
       !contains(github.event.issue.labels.*.name, 'ci-failure-analysis') &&
       !contains(github.event.issue.labels.*.name, 'implemented') &&
+      !contains(github.event.issue.labels.*.name, 'agentic-workflows') &&
       (
         github.event.action != 'labeled' ||
         (
@@ -284,6 +292,14 @@ jobs:
               return;
             }
             const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+            const title = issue.title || '';
+            const body = issue.body || '';
+            const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
+            if (title.startsWith('[aw]') || title.includes('[agentics]') || title.includes('[agent]') ||
+                body.includes('<!-- gh-aw-failure-issue') || labels.includes('agentic-workflows')) {
+              core.setFailed(`#${issueNumber} is a gh-aw workflow-health report and is excluded from AL issue triage.`);
+              return;
+            }
 
             if (issue.pull_request) {
               core.setFailed(`#${issueNumber} is a pull request; issue triage cannot process pull requests.`);
@@ -294,7 +310,6 @@ jobs:
               return;
             }
 
-            const body = issue.body || '';
             const alreadyTriaged = body.includes(process.env.TRIAGE_MARKER) || body.includes(process.env.TRIAGE_MARKER_LEGACY);
             if (alreadyTriaged && !force) {
               core.setFailed(`#${issueNumber} already has a triage marker; rerun with force=true to re-triage it.`);
@@ -362,9 +377,11 @@ jobs:
               const body = issue.body || '';
               const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
               return title.includes('Org Issue Scan') || title.includes('Triage Report') ||
-                title.includes('[agentics]') || title.includes('[agent]') ||
+                title.startsWith('[aw]') || title.includes('[agentics]') || title.includes('[agent]') ||
                 title.startsWith('CI Failure:') || body.includes('<!-- ci-analysis-context -->') ||
+                body.includes('<!-- gh-aw-failure-issue') ||
                 labels.includes('ci-failure-analysis') || labels.includes('implemented') ||
+                labels.includes('agentic-workflows') ||
                 labels.includes(process.env.LABEL_NOT_PROCESSABLE) || labels.includes(process.env.LABEL_DISPUTED);
             };
 
