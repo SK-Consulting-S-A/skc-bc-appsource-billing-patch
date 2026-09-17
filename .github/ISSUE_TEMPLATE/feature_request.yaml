@@ -1,0 +1,50 @@
+name: Feature request
+description: A new capability or improvement to existing Business Central AL functionality
+type: Feature
+labels:
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the desired behavior and the AL area where it belongs. Concrete acceptance
+        criteria make automatic implementation safer.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should it do
+      description: Describe the behavior, not the implementation.
+    validations:
+      required: true
+  - type: input
+    id: affected_object
+    attributes:
+      label: Affected AL object or area
+      description: Object type/ID/name if known, otherwise the module or folder.
+      placeholder: Codeunit 50120 "Payment Export" or Payment export
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why is it needed
+      description: Explain the business impact and who is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How will we know it works
+      description: Add concrete, testable acceptance criteria.
+      placeholder: |
+        - Exporting a posted payment produces ...
+        - An empty journal shows ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Mockups, screenshots, or example files
+      description: Optional supporting material.
+    validations:
+      required: false
