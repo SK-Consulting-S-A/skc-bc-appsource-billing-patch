@@ -36,16 +36,17 @@ safe-outputs:
     target: "*"
     allowed: ["Bug", "Feature", "Task"]
   set-issue-field:
-    max: 1
+    max: 2
     target: "*"
-    allowed-fields: [Priority]
+    allowed-fields: [Priority, Field Effort]
   add-comment:
     max: 1
     target: "*"
   update-issue:
     max: 1
     target: "*"
-model: claude-sonnet-4.6
+model: claude-sonnet-5
+run-name: "Issue Triage Agent – BC AL #${{ github.event.inputs.issue_number }}"
 engine:
   id: copilot
 network:
@@ -80,6 +81,13 @@ Before doing anything else:
 
 Then inspect the issue title, body, and labels.
 
+**Triage context marker.** An issue is considered already triaged when its body contains either:
+
+- `<!-- skc-triage-context -->` — the durable machine marker written by this workflow.
+- `### Context (added by skc-bc-internal-agents triage)` — the legacy marker retained for compatibility.
+
+Always check both markers. The legacy heading is visible and may be removed by a human tidying the issue body.
+
 - If the issue title contains any of the following strings, **stop immediately and do nothing**:
   - `Org Issue Scan`
   - `Triage Report`
@@ -94,9 +102,9 @@ Then inspect the issue title, body, and labels.
 
 These are self-generated pipeline report, CI-tracking, or already-implemented issues and do not need triage. Stop immediately without calling a safe-output tool, adding a comment, or adding narrative output.
 
-- If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue body already contains a `### Context (added by skc-bc-internal-agents triage)` section **and** the issue already has an issue type set (`Bug`, `Feature`, or `Task`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
+- If `AL_ISSUE_TRIAGE_ACTION` is `reopened`, check whether the issue already has either triage context marker **and** an issue type set (`Bug`, `Feature`, or `Task`). If so, skip Steps 3 and 4 (enrichment and labelling) and jump directly to Step 7 to post a re-opened acknowledgement comment.
 
-- If `AL_ISSUE_TRIAGE_ACTION` is `clarification-received` and the issue body already contains `### Context (added by skc-bc-internal-agents triage)`, treat this as a **clarification follow-up**:
+- If `AL_ISSUE_TRIAGE_ACTION` is `clarification-received` and the issue already has either triage context marker, treat this as a **clarification follow-up**:
   - read the latest human comments after the prior triage acknowledgement
   - reuse the existing triage context instead of appending a second triage block
   - re-evaluate classification / priority / `ready-to-implement` using the original issue plus the new human reply
@@ -134,7 +142,7 @@ Read the issue title and body carefully. Note the reporter's exact words — do 
 
 ## 3. Enrich and Optimise the Issue Body
 
-If `AL_ISSUE_TRIAGE_ACTION` is `clarification-received` and the issue already has the triage context block, do **not** append another `### Context (added by skc-bc-internal-agents triage)` section. Reuse the existing enriched body, and only update it when the new human clarification materially changes the acceptance criteria or the "What needs to change" section.
+If `AL_ISSUE_TRIAGE_ACTION` is `clarification-received` and the issue already has either triage context marker, do **not** append another context section. Reuse the existing enriched body, and only update it when the new human clarification materially changes the acceptance criteria or the "What needs to change" section.
 
 Using what you found in step 2, rewrite the issue body to make it implementation-ready. Follow these rules:
 
@@ -143,6 +151,7 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 
 ```markdown
 ---
+<!-- skc-triage-context -->
 ### Context (added by skc-bc-internal-agents triage)
 
 **Affected Object:** `<ObjectType> <ID> <ObjectName>` (file: `<path/to/file.al>`)
@@ -177,6 +186,13 @@ Based on the original text **and** the source research, identify:
   - **High** – a main feature is not working correctly
   - **Medium** – minor functional issue or improvement request
   - **Low** – cosmetic, documentation, or minor enhancement
+- **Field Effort** for every eligible AL issue, using only evidence from the issue, its attachments, and the relevant source research:
+  - `Small` – a focused 1–2 object change, simple action, or label-only change.
+  - `Medium` – several related changes or moderate business logic.
+  - `Large` – multiple objects, new tables or reports, complex logic, dependencies, or meaningful test work.
+  - `XLarge` – cross-module integrations, migrations, or architecture-heavy work.
+
+Before choosing `Field Effort`, consider issue clarity, affected AL objects, reuse of existing code, dependencies, tests, permissions, translations, and upgrades. Do not guess when the available evidence is insufficient: leave `Field Effort` unset and state exactly what information is missing in the acknowledgement comment. This is additional to, and must not change, the existing `Priority` classification behavior.
 
 ---
 
@@ -213,6 +229,10 @@ Allowed values are `Urgent`, `High`, `Medium`, and `Low`. Do **not** add `priori
 
 Always provide `item_number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER` explicitly when adding labels.
 
+### Field Effort field (set when evidence is sufficient)
+
+For every eligible AL issue, call `set_issue_field` once with `field_name: "Field Effort"` and exactly one of `Small`, `Medium`, `Large`, or `XLarge`, using the rubric in Step 4. If the issue does not provide enough evidence to distinguish an effort level, do not call `set_issue_field` for `Field Effort`; leave it unset and state the missing information in the acknowledgement comment. The `Priority` write remains required and follows the existing rules above, so an eligible issue may receive two field writes total.
+
 ---
 
 ## 6. Evaluate Readiness for Automatic Implementation
@@ -230,11 +250,37 @@ If **all** criteria are met, apply `ready-to-implement` (only if it exists as a 
 
 If any criterion is not met, do **not** apply `ready-to-implement`.
 
+If the issue is not ready because the reporter must provide more information, keep/apply `needs-triage` and put this hidden marker as the first line of the acknowledgement comment:
+
+`<!-- skc-triage-needs-clarification -->`
+
+This marker tells the target-repository dispatcher that a later human reply is a clarification response worth dispatching back to this workflow. Do not add it to comments that are merely informational or already complete.
+
+### Issues opened from a Business Central case
+
+If the issue body contains `<!-- bc-case-context -->`, this issue was created by Business Central from an approved case. Business Central owns the functional approval; GitHub owns the **technical** approval, and that is recorded by the `skc-tech-approved` label, which only a human applies.
+
+- Do **not** apply `ready-to-implement` unless the issue already carries `skc-tech-approved`, no matter how complete the body looks. A BC-written specification reads as ready, and without this rule `al-new-feature-dispatch.yml` would start coding before an architect has looked at it.
+- Everything else in triage still runs. Enrich the body, write `<!-- skc-triage-context -->`, set the type and `Priority`, and apply `question` or `needs-triage` when they apply. Skipping triage entirely would leave the issue with no triage marker, and the reconciliation sweep would then re-queue it and eventually label it `agent-not-processable`.
+- Never apply `skc-tech-approved` or `skc-planned` yourself. Those are the human and Business Central sides of the handshake.
+- In your step 7 comment, say that the issue came from Business Central case `<number>` and is waiting for `skc-tech-approved` before implementation can be queued.
+
 ---
 
 ## 7. Post an Acknowledgement Comment
 
-Post a single comment that includes:
+### Degraded runs: report failure, never a fallback verdict
+
+Before writing the acknowledgement, verify that this run actually completed research and enrichment. If the issue could not be read reliably, the relevant AL source could not be found, or classification/enrichment failed:
+
+- Clearly state that **triage did not complete** and identify the failed step.
+- Apply `needs-triage`.
+- Do **not** set the issue type, `Priority`, or `Field Effort`.
+- Do **not** apply `ready-to-implement`.
+- Never present a placeholder, default, score, or partial classification as a completed assessment.
+- Tell the reporter or maintainer what information or retry is needed.
+
+Otherwise, post a single comment that includes:
 
 1. A brief summary referencing the actual AL object found (e.g. "This affects `Page 50100 ECDF Declaration Wizard`").
 2. The classification applied.
@@ -277,4 +323,7 @@ Post a single comment that includes:
 - Only apply labels that already exist in the repository.
 - If you are uncertain about classification, apply `needs-triage` and note the uncertainty in the comment.
 - Only apply `ready-to-implement` if it already exists as a label in the repository — do not create it.
+- Never apply `ready-to-implement` to an issue whose body contains `<!-- bc-case-context -->` unless `skc-tech-approved` is already on it. See step 6.
+- Always write `<!-- skc-triage-context -->` as the first line of the context block added in Step 3.
+- If the issue has `triage-disputed`, read and address the human objection before any reclassification.
 - Always provide the explicit issue number on every safe output write because this workflow is not triggered directly by the issue event.
