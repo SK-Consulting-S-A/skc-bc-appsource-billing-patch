@@ -1,59 +1,521 @@
 name: "Issue Triage Dispatcher"
 
-# Lightweight gate for issue triage. This keeps CI tracking issues and
-# self-generated reports from spinning up the heavier agent workflow.
+# Lightweight, deterministic gate for issue triage. The event path handles new
+# work quickly; the scheduled sweep is a bounded recovery net for dispatches
+# lost to transient GitHub failures or dropped webhooks.
+#
+# gh-aw health reports ([aw] titles, agentic-workflows label, or the
+# gh-aw-failure-issue HTML comment) are not AL work. Skip them here so the
+# triage agent is never asked to no-op: noop is disabled, and a missing-tool
+# report would open another [aw] issue.
 
 on:
   issues:
     types: [opened, reopened, labeled]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Single issue number to (re-)dispatch for triage"
+        required: true
+        type: string
+      force:
+        description: "Dispatch even when the issue already has a triage marker"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: write
-  issues: read
+  issues: write
 
 concurrency:
-  group: triage-dispatch-${{ github.repository_id }}-${{ github.event.issue.number }}
+  group: triage-dispatch-${{ github.repository_id }}-${{ github.event.issue.number || github.event.inputs.issue_number || github.event_name }}
   cancel-in-progress: false
 
+env:
+  TRIAGE_WORKFLOW: al-issue-triage.lock.yml
+  TRIAGE_MARKER: '<!-- skc-triage-context -->'
+  TRIAGE_MARKER_LEGACY: '### Context (added by skc-bc-internal-agents triage)'
+  LABEL_REQUEUED: triage-requeued
+  LABEL_NOT_PROCESSABLE: agent-not-processable
+  LABEL_DISPUTED: triage-disputed
+  SETTLE_SECONDS: '120'
+  SWEEP_LOOKBACK_DAYS: '14'
+  SWEEP_MAX_PER_RUN: '10'
+
 jobs:
-  dispatch:
+  dispatch_event:
+    name: Dispatch from issue event
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     if: |
+      github.event_name == 'issues' &&
       !contains(github.event.issue.title, 'Org Issue Scan') &&
       !contains(github.event.issue.title, 'Triage Report') &&
+      !startsWith(github.event.issue.title, '[aw]') &&
       !contains(github.event.issue.title, '[agentics]') &&
       !contains(github.event.issue.title, '[agent]') &&
       !startsWith(github.event.issue.title, 'CI Failure:') &&
       !contains(github.event.issue.body || '', '<!-- ci-analysis-context -->') &&
-      !contains(toJson(github.event.issue.labels), '"name":"ci-failure-analysis"') &&
-      !contains(toJson(github.event.issue.labels), '"name":"implemented"') &&
+      !contains(github.event.issue.body || '', '<!-- gh-aw-failure-issue') &&
+      !contains(github.event.issue.labels.*.name, 'ci-failure-analysis') &&
+      !contains(github.event.issue.labels.*.name, 'implemented') &&
+      !contains(github.event.issue.labels.*.name, 'agentic-workflows') &&
       (
         github.event.action != 'labeled' ||
         (
           github.event.label.name == 'triage-response' &&
-          contains(github.event.issue.body || '', '### Context (added by skc-bc-internal-agents triage)') &&
-          !contains(toJson(github.event.issue.labels), '"name":"ready-to-implement"')
+          (
+            contains(github.event.issue.body || '', '<!-- skc-triage-context -->') ||
+            contains(github.event.issue.body || '', '### Context (added by skc-bc-internal-agents triage)')
+          ) &&
+          !contains(github.event.issue.labels.*.name, 'ready-to-implement')
         )
       )
     steps:
+      - name: Settle newly opened issue
+        if: github.event.action == 'opened'
+        shell: bash
+        run: |
+          echo "Waiting ${SETTLE_SECONDS}s for the reporter to finish editing #${{ github.event.issue.number }}..."
+          sleep "$SETTLE_SECONDS"
+
       - name: Dispatch issue triage agent
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
           script: |
-            const ref = context.payload.repository.default_branch || 'main';
+            const issueNumber = context.issue.number;
+            const workflow = process.env.TRIAGE_WORKFLOW;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function workflowExists() {
+              try {
+                await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: `.github/workflows/${workflow}`,
+                  ref: context.payload.repository.default_branch || 'main',
+                });
+                return true;
+              } catch (error) {
+                core.warning(`Cannot find ${workflow} in ${owner}/${repo}: ${error.message}`);
+                return false;
+              }
+            }
+
+            async function hasInFlightRun() {
+              const statuses = ['queued', 'in_progress', 'requested', 'waiting', 'pending'];
+              const since = Date.now() - 30 * 60 * 1000;
+              for (const status of statuses) {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner,
+                  repo,
+                  workflow_id: workflow,
+                  status,
+                  per_page: 100,
+                });
+                if ((data.workflow_runs || []).some(run => {
+                  const created = new Date(run.created_at || 0).getTime();
+                  const title = `${run.display_title || ''} ${run.name || ''}`;
+                  return created >= since && title.includes(`#${issueNumber}`);
+                })) return true;
+              }
+              return false;
+            }
+
+            async function dispatchWithRetry(action) {
+              let lastError;
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await github.rest.actions.createWorkflowDispatch({
+                    owner,
+                    repo,
+                    ref: context.payload.repository.default_branch || 'main',
+                    workflow_id: workflow,
+                    inputs: {
+                      issue_number: String(issueNumber),
+                      issue_action: action,
+                      comment_id: '',
+                    },
+                  });
+                  core.info(`Dispatched ${workflow} for issue #${issueNumber} (${action}, attempt ${attempt})`);
+                  return true;
+                } catch (error) {
+                  lastError = error;
+                  const status = error.status || 0;
+                  if (status >= 400 && status < 500) throw error;
+                  if (attempt < 3) {
+                    const delay = attempt * 5000;
+                    core.warning(`Dispatch attempt ${attempt} failed (${status || 'network'}): ${error.message}; retrying in ${delay / 1000}s`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                  }
+                }
+              }
+              throw lastError;
+            }
+
+            if (!await workflowExists()) return;
+            if (await hasInFlightRun()) {
+              core.info(`Issue #${issueNumber} already has a triage run in flight; skipping duplicate dispatch.`);
+              return;
+            }
+
             const action = context.payload.action === 'labeled'
               ? 'clarification-received'
               : String(context.payload.action || 'opened');
-            await github.rest.actions.createWorkflowDispatch({
+            await dispatchWithRetry(action);
+
+  dispatch_clarification:
+    name: Mark clarification response
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: |
+      github.event_name == 'issue_comment' &&
+      !github.event.issue.pull_request &&
+      !contains(github.event.comment.body, '/not-accurate') &&
+      github.event.comment.user.type != 'Bot' &&
+      !endsWith(github.event.comment.user.login, '[bot]')
+    steps:
+      - name: Apply triage-response label
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issueNumber = context.issue.number;
+            const currentComment = context.payload.comment;
+            const clarificationMarker = '<!-- skc-triage-needs-clarification -->';
+            const { data: issue } = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber,
+            });
+
+            const commenterLogin = currentComment.user?.login || 'unknown';
+            const commenterIsBot = currentComment.user?.type === 'Bot' || commenterLogin.endsWith('[bot]');
+            if (commenterIsBot) {
+              core.info(`Ignoring clarification comment from bot account ${commenterLogin}.`);
+              return;
+            }
+
+            const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
+            if (!labels.includes('needs-triage') || labels.includes('ready-to-implement') ||
+                labels.includes(process.env.LABEL_NOT_PROCESSABLE) || labels.includes(process.env.LABEL_DISPUTED) ||
+                labels.includes('implemented')) {
+              core.info(`Issue #${issueNumber} is not awaiting clarification; skipping follow-up dispatch.`);
+              return;
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const currentCreatedAt = new Date(currentComment.created_at || 0).getTime();
+            const clarificationRequested = comments.some(comment =>
+              comment.id !== currentComment.id &&
+              new Date(comment.created_at || 0).getTime() < currentCreatedAt &&
+              (comment.body || '').includes(clarificationMarker)
+            );
+            if (!clarificationRequested) {
+              core.info(`Issue #${issueNumber} has no prior triage clarification request; skipping.`);
+              return;
+            }
+
+            // Re-adding the label deliberately creates a fresh `issues.labeled`
+            // event for every clarification round. The labeled-event path owns
+            // workflow existence checks, in-flight detection, retries, and the
+            // clarification-received dispatch, so this job never dispatches a
+            // second run directly.
+            try {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                name: 'triage-response',
+              });
+            } catch (error) {
+              // A missing label is expected on the first clarification round.
+              if (error.status !== 404) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              labels: ['triage-response'],
+            });
+            core.info(`Applied triage-response to #${issueNumber}; the labeled-event path will dispatch clarification triage.`);
+
+  dispatch_manual:
+    name: Dispatch single issue (manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Dispatch issue triage agent
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        env:
+          INPUT_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
+          INPUT_FORCE: ${{ github.event.inputs.force || 'false' }}
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const rawIssueNumber = process.env.INPUT_ISSUE_NUMBER || '';
+            if (!/^\d+$/.test(rawIssueNumber) || Number(rawIssueNumber) <= 0) {
+              core.setFailed(`issue_number must be a positive numeric issue number, not "${rawIssueNumber}"`);
+              return;
+            }
+
+            const issueNumber = Number(rawIssueNumber);
+            const force = process.env.INPUT_FORCE === 'true';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const workflow = process.env.TRIAGE_WORKFLOW;
+            try {
+              await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: `.github/workflows/${workflow}`,
+                ref: context.payload.repository.default_branch || 'main',
+              });
+            } catch (error) {
+              core.setFailed(`Cannot find ${workflow} in ${owner}/${repo}: ${error.message}`);
+              return;
+            }
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+            const title = issue.title || '';
+            const body = issue.body || '';
+            const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
+            if (title.startsWith('[aw]') || title.includes('[agentics]') || title.includes('[agent]') ||
+                body.includes('<!-- gh-aw-failure-issue') || labels.includes('agentic-workflows')) {
+              core.setFailed(`#${issueNumber} is a gh-aw workflow-health report and is excluded from AL issue triage.`);
+              return;
+            }
+
+            if (issue.pull_request) {
+              core.setFailed(`#${issueNumber} is a pull request; issue triage cannot process pull requests.`);
+              return;
+            }
+            if (issue.state !== 'open') {
+              core.setFailed(`#${issueNumber} is ${issue.state}; only open issues can be triaged.`);
+              return;
+            }
+
+            const alreadyTriaged = body.includes(process.env.TRIAGE_MARKER) || body.includes(process.env.TRIAGE_MARKER_LEGACY);
+            if (alreadyTriaged && !force) {
+              core.setFailed(`#${issueNumber} already has a triage marker; rerun with force=true to re-triage it.`);
+              return;
+            }
+
+            const statuses = ['queued', 'in_progress', 'requested', 'waiting', 'pending'];
+            const since = Date.now() - 30 * 60 * 1000;
+            for (const status of statuses) {
+              const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: workflow, status, per_page: 100 });
+              if ((data.workflow_runs || []).some(run => {
+                const title = `${run.display_title || ''} ${run.name || ''}`;
+                return new Date(run.created_at || 0).getTime() >= since && title.includes(`#${issueNumber}`);
+              })) {
+                core.info(`#${issueNumber} already has a triage run in flight; skipping.`);
+                return;
+              }
+            }
+
+            let lastError;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  ref: context.payload.repository.default_branch || 'main',
+                  workflow_id: workflow,
+                  inputs: {
+                    issue_number: String(issueNumber),
+                    issue_action: alreadyTriaged ? 'clarification-received' : 'opened',
+                    comment_id: '',
+                  },
+                });
+                core.info(`Dispatched manual triage for #${issueNumber} (attempt ${attempt})`);
+                return;
+              } catch (error) {
+                lastError = error;
+                const status = error.status || 0;
+                if (status >= 400 && status < 500) throw error;
+                if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 5000));
+              }
+            }
+            throw lastError;
+
+  sweep:
+    name: Reconcile untriaged issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Find and dispatch untriaged issues
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const workflow = process.env.TRIAGE_WORKFLOW;
+            const lookbackDays = Number(process.env.SWEEP_LOOKBACK_DAYS);
+            const maxPerRun = Number(process.env.SWEEP_MAX_PER_RUN);
+            const since = new Date(Date.now() - lookbackDays * 86400000).toISOString();
+            const settleMs = Number(process.env.SETTLE_SECONDS) * 1000;
+            const skipIssue = issue => {
+              const title = issue.title || '';
+              const body = issue.body || '';
+              const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
+              return title.includes('Org Issue Scan') || title.includes('Triage Report') ||
+                title.startsWith('[aw]') || title.includes('[agentics]') || title.includes('[agent]') ||
+                title.startsWith('CI Failure:') || body.includes('<!-- ci-analysis-context -->') ||
+                body.includes('<!-- gh-aw-failure-issue') ||
+                labels.includes('ci-failure-analysis') || labels.includes('implemented') ||
+                labels.includes('agentic-workflows') ||
+                labels.includes(process.env.LABEL_NOT_PROCESSABLE) || labels.includes(process.env.LABEL_DISPUTED);
+            };
+
+            const activeRunForIssue = async issueNumber => {
+              const statuses = ['queued', 'in_progress', 'requested', 'waiting', 'pending'];
+              const activeSince = Date.now() - 30 * 60 * 1000;
+              for (const status of statuses) {
+                const { data } = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: workflow, status, per_page: 100 });
+                if ((data.workflow_runs || []).some(run => {
+                  const title = `${run.display_title || ''} ${run.name || ''}`;
+                  return new Date(run.created_at || 0).getTime() >= activeSince && title.includes(`#${issueNumber}`);
+                })) return true;
+              }
+              return false;
+            };
+
+            const dispatch = async issueNumber => {
+              let lastError;
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await github.rest.actions.createWorkflowDispatch({
+                    owner,
+                    repo,
+                    ref: context.payload.repository.default_branch || 'main',
+                    workflow_id: workflow,
+                    inputs: { issue_number: String(issueNumber), issue_action: 'opened', comment_id: '' },
+                  });
+                  return;
+                } catch (error) {
+                  lastError = error;
+                  const status = error.status || 0;
+                  if (status >= 400 && status < 500) throw error;
+                  if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 5000));
+                }
+              }
+              throw lastError;
+            };
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', since, per_page: 100,
+            });
+            const candidates = [];
+            const stalled = [];
+            const now = Date.now();
+            try {
+              await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: `.github/workflows/${workflow}`,
+                ref: context.payload.repository.default_branch || 'main',
+              });
+            } catch (error) {
+              core.setFailed(`Cannot find ${workflow} in ${owner}/${repo}: ${error.message}`);
+              return;
+            }
+            for (const issue of issues) {
+              if (issue.pull_request || skipIssue(issue)) continue;
+              const body = issue.body || '';
+              if (body.includes(process.env.TRIAGE_MARKER) || body.includes(process.env.TRIAGE_MARKER_LEGACY)) continue;
+              const labels = (issue.labels || []).map(label => typeof label === 'string' ? label : label.name);
+              if (labels.includes('ready-to-implement')) continue;
+              if (now - new Date(issue.created_at).getTime() < settleMs) continue;
+              if (labels.includes(process.env.LABEL_REQUEUED)) stalled.push(issue);
+              else candidates.push(issue);
+            }
+
+            for (const issue of stalled) {
+              try {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [process.env.LABEL_NOT_PROCESSABLE] });
+                core.warning(`#${issue.number} is still untriaged after a previous sweep dispatch; marked ${process.env.LABEL_NOT_PROCESSABLE}.`);
+              } catch (error) {
+                core.warning(`Could not mark #${issue.number} as not processable: ${error.message}`);
+              }
+            }
+
+            candidates.sort((left, right) => new Date(left.created_at) - new Date(right.created_at));
+            const batch = candidates.slice(0, maxPerRun);
+            let dispatched = 0;
+            let skippedInFlight = 0;
+            const failures = [];
+            for (const issue of batch) {
+              if (await activeRunForIssue(issue.number)) {
+                skippedInFlight++;
+                continue;
+              }
+              try {
+                await dispatch(issue.number);
+                await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [process.env.LABEL_REQUEUED] });
+                dispatched++;
+              } catch (error) {
+                failures.push(`#${issue.number}: ${error.message}`);
+              }
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
+            await core.summary
+              .addHeading('Issue triage reconciliation', 2)
+              .addList([
+                `Candidates: **${candidates.length}**`,
+                `Dispatched: **${dispatched}**`,
+                `Skipped because a run is active: **${skippedInFlight}**`,
+                `Stalled and marked not processable: **${stalled.length}**`,
+                `Deferred overflow: **${Math.max(0, candidates.length - batch.length)}**`,
+                `Dispatch failures: **${failures.length}**`,
+              ])
+              .write();
+            if (failures.length) core.setFailed(failures.join('\n'));
+
+  dispute:
+    name: Record disputed triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request && contains(github.event.comment.body, '/not-accurate')
+    steps:
+      - name: Label and acknowledge
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const association = context.payload.comment.author_association || 'NONE';
+            const login = context.payload.comment.user?.login || '';
+            if (association === 'NONE' || login.endsWith('[bot]')) {
+              core.info(`Ignoring dispute from untrusted account ${login}.`);
+              return;
+            }
+            const issueNumber = context.issue.number;
+            const commentId = context.payload.comment.id;
+            const ackMarker = `<!-- triage-dispute-recorded:${commentId} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, per_page: 100 });
+            if (comments.some(comment => (comment.body || '').includes(ackMarker))) return;
+            await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, labels: [process.env.LABEL_DISPUTED] });
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref,
-              workflow_id: 'al-issue-triage.lock.yml',
-              inputs: {
-                issue_number: String(context.issue.number),
-                issue_action: action,
-                comment_id: '',
-              },
+              issue_number: issueNumber,
+              body: `${ackMarker}\n\n**Triage result disputed.** This issue is excluded from reconciliation until a human removes \`${process.env.LABEL_DISPUTED}\` and adds \`triage-response\`.`,
             });
-            core.info(`Dispatched al-issue-triage for issue #${context.issue.number} (${action})`);

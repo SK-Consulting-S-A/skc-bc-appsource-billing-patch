@@ -1,0 +1,26 @@
+name: Task, question, or documentation
+description: Work that is neither a defect nor a new capability
+type: Task
+labels:
+  - needs-triage
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs doing
+    validations:
+      required: true
+  - type: input
+    id: area
+    attributes:
+      label: Affected object, module, or document
+      placeholder: docs/installation-guide.md or Payment export
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Links, prior decisions, or background that helps the team act.
+    validations:
+      required: false

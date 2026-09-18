@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in the Business Central AL solution behaves incorrectly
+type: Bug
+labels:
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please provide the AL object and Business Central version so the triage agent can
+        locate the relevant source and avoid guessing.
+  - type: input
+    id: affected_object
+    attributes:
+      label: Affected AL object
+      description: Object type, ID, and name if known; a partial name is acceptable.
+      placeholder: Page 50100 "ECDF Declaration Wizard"
+    validations:
+      required: true
+  - type: input
+    id: bc_version
+    attributes:
+      label: Business Central version
+      description: Application version and environment where the issue occurred.
+      placeholder: 27.0 SaaS sandbox
+    validations:
+      required: true
+  - type: textarea
+    id: what_happens
+    attributes:
+      label: What happens
+      description: Include the exact error text when available.
+    validations:
+      required: true
+  - type: textarea
+    id: what_should_happen
+    attributes:
+      label: What should happen instead
+      description: State the expected, testable behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Set ...
+        3. Choose ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, stack traces, or telemetry
+      description: Optional evidence; screenshots can be inspected by the triage agent.
+    validations:
+      required: false
