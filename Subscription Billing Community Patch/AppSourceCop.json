@@ -1,5 +1,8 @@
 {
   "name": "Subscription Billing Community Patch",
   "publisher": "SK Consulting S.A.",
-  "mandatorySuffix": "085SKC"
+  "mandatorySuffix": "085SKC",
+  "supportedCountries": [
+    "LU"
+  ]
 }
