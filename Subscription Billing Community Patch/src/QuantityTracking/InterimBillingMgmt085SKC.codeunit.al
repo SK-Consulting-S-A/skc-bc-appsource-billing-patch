@@ -7,23 +7,51 @@ codeunit 70631064 InterimBillingMgmt085SKC
 {
     Access = Internal;
     Permissions =
-        tabledata SubQuantityHistory085SKC = RIM,
         tabledata "Billing Line" = RIM,
         tabledata "Billing Line Archive" = R,
-        tabledata "Subscription Line" = R,
-        tabledata "Subscription Header" = R,
+        tabledata "Cust. Sub. Contract Line" = R,
         tabledata "Customer Subscription Contract" = R,
-        tabledata "Cust. Sub. Contract Line" = R;
+        tabledata SubQuantityHistory085SKC = RIM,
+        tabledata "Subscription Header" = R,
+        tabledata "Subscription Line" = R;
 
     var
         FromDateFilter: Date;
         ToDateFilter: Date;
-        NoUnbilledChangesMsg: Label 'No unbilled quantity changes found for contract %1.', Comment = '%1 = Contract No.';
         BillingLinesCreatedMsg: Label '%1 interim billing line(s) created for contract %2. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No.';
-        NoBillingArchiveMsg: Label 'Subscription %1 has never been billed. Cannot calculate pro-rata for quantity change on %2.', Comment = '%1 = Subscription No., %2 = Change Date';
         BillingLinesCreatedWithSkipsMsg: Label '%1 interim billing line(s) created for contract %2. %3 change(s) were skipped because no reliable pro-rata rate could be derived. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No., %3 = Skipped count';
         CannotComputeProRataMsg: Label 'Subscription %1: no reliable pro-rata rate could be derived for the quantity change on %2, so no interim billing line was created. Check the Billing Base Period, Billing Rhythm and Price on the subscription line.', Comment = '%1 = Subscription No., %2 = Change Date';
+        InterimDescriptionTxt: Label 'Interim: %1 %2->%3', Comment = '%1 = Subscription line description, %2 = Old quantity, %3 = New quantity';
+        NoBillingArchiveMsg: Label 'Subscription %1 has never been billed. Cannot calculate pro-rata for quantity change on %2.', Comment = '%1 = Subscription No., %2 = Change Date';
+        NoUnbilledChangesMsg: Label 'No unbilled quantity changes found for contract %1.', Comment = '%1 = Contract No.';
         UnbilledChangesExistErr: Label 'Unbilled quantity changes exist for Subscription %1. Run "Create Interim Billing" on contract %2 before creating the regular billing proposal.', Comment = '%1 = Subscription No., %2 = Contract No.';
+
+    procedure HasUnbilledChangesForContract(ContractNo: Code[20]): Boolean
+    var
+        ContractLine: Record "Cust. Sub. Contract Line";
+        QtyHistory: Record SubQuantityHistory085SKC;
+    begin
+        ContractLine.SetRange("Subscription Contract No.", ContractNo);
+        ContractLine.SetFilter("Subscription Header No.", '<>%1', '');
+        if ContractLine.FindSet() then
+            repeat
+                QtyHistory.SetRange(SubscriptionHeaderNo085SKC, ContractLine."Subscription Header No.");
+                QtyHistory.SetRange(InterimBilled085SKC, false);
+                QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
+                if not QtyHistory.IsEmpty() then
+                    exit(true);
+            until ContractLine.Next() = 0;
+        exit(false);
+    end;
+
+    // --- Event Subscribers ---
+
+    procedure IsInterimBillingEnabled(): Boolean
+    var
+        Setup: Record "Subscription Contract Setup";
+    begin
+        exit(Setup.Get() and Setup.EnableInterimBilling085SKC);
+    end;
 
     procedure ProcessContract(CustomerContract: Record "Customer Subscription Contract")
     begin
@@ -32,21 +60,21 @@ codeunit 70631064 InterimBillingMgmt085SKC
 
     procedure ProcessContractWithDates(CustomerContract: Record "Customer Subscription Contract"; NewFromDate: Date; NewToDate: Date)
     var
-        ContractLine: Record "Cust. Sub. Contract Line";
-        SubLine: Record "Subscription Line";
-        QtyHistory: Record SubQuantityHistory085SKC;
         BillingLine: Record "Billing Line";
+        ContractLine: Record "Cust. Sub. Contract Line";
+        QtyHistory: Record SubQuantityHistory085SKC;
+        SubLine: Record "Subscription Line";
         ExpectedCalc: Codeunit SubBillExpectedCalc085SKC;
-        PendingEntryNos: List of [Integer];
         BillingFrom: Date;
         BillingTo: Date;
         WindowFrom: Date;
         WindowTo: Date;
-        ProRataUnitPrice: Decimal;
         DeltaAmount: Decimal;
+        ProRataUnitPrice: Decimal;
         LineCount: Integer;
-        SkippedCount: Integer;
         PendingEntryNo: Integer;
+        SkippedCount: Integer;
+        PendingEntryNos: List of [Integer];
     begin
         FromDateFilter := NewFromDate;
         ToDateFilter := NewToDate;
@@ -111,7 +139,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
                 BillingLine."Subscription Line Entry No." := SubLine."Entry No.";
                 BillingLine."Subscription Line Description" :=
                     CopyStr(
-                        StrSubstNo('Interim: %1 %2->%3',
+                        StrSubstNo(InterimDescriptionTxt,
                             SubLine.Description,
                             Format(QtyHistory.OldQuantity085SKC, 0, '<Integer>'),
                             Format(QtyHistory.NewQuantity085SKC, 0, '<Integer>')),
@@ -171,55 +199,6 @@ codeunit 70631064 InterimBillingMgmt085SKC
             until QtyHistory.Next() = 0;
     end;
 
-    /// <summary>
-    /// Keeps an interim charge billing only the quantity that was added.
-    ///
-    /// Codeunit 8060 builds the sales line with
-    /// <c>SalesLine.Validate(Quantity, GetSign() * ServiceObject.Quantity)</c>, so
-    /// it takes the subscription's current quantity and recomputes the amount from
-    /// it. For an interim charge that is wrong twice over: the pre-existing
-    /// quantity is billed a second time for the remainder of a period it was
-    /// already paid for, and the amount calculated by interim billing is discarded.
-    ///
-    /// Several billing lines for one subscription line are aggregated into a single
-    /// temporary line with their unit prices summed, so the correction is applied
-    /// only where the temporary line stands for exactly one billing line and that
-    /// line is an interim charge. Anything aggregated is left to standard behaviour
-    /// rather than guessed at.
-    /// </summary>
-    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Create Billing Documents", 'OnBeforeInsertSalesLineFromContractLine', '', false, false)]
-    local procedure PreserveInterimQuantityOnBeforeInsertSalesLine(var SalesLine: Record "Sales Line"; var TempBillingLine: Record "Billing Line" temporary)
-    var
-        BillingLine: Record "Billing Line";
-        Sign: Integer;
-    begin
-        if not IsInterimBillingEnabled() then
-            exit;
-
-        BillingLine.SetRange("Subscription Contract No.", TempBillingLine."Subscription Contract No.");
-        BillingLine.SetRange("Subscription Line Entry No.", TempBillingLine."Subscription Line Entry No.");
-        BillingLine.SetRange("Billing from", TempBillingLine."Billing from");
-        BillingLine.SetRange("Billing to", TempBillingLine."Billing to");
-        BillingLine.SetRange(Rebilling, TempBillingLine.Rebilling);
-        if BillingLine.Count() <> 1 then
-            exit;
-        BillingLine.FindFirst();
-
-        if not BillingLine.InterimBilling085SKC then
-            exit;
-        if BillingLine."Service Object Quantity" = 0 then
-            exit;
-        if SalesLine.Quantity = BillingLine."Service Object Quantity" then
-            exit;
-
-        // GetSign on Billing Line is internal, so the direction already applied by
-        // standard code is reused rather than recomputed.
-        Sign := 1;
-        if SalesLine.Quantity < 0 then
-            Sign := -1;
-        SalesLine.Validate(Quantity, Sign * BillingLine."Service Object Quantity");
-    end;
-
     local procedure FindBillingPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingFrom: Date; var BillingTo: Date): Boolean
     var
         BillingLineArchive: Record "Billing Line Archive";
@@ -252,33 +231,6 @@ codeunit 70631064 InterimBillingMgmt085SKC
         end;
 
         exit(false);
-    end;
-
-    procedure HasUnbilledChangesForContract(ContractNo: Code[20]): Boolean
-    var
-        ContractLine: Record "Cust. Sub. Contract Line";
-        QtyHistory: Record SubQuantityHistory085SKC;
-    begin
-        ContractLine.SetRange("Subscription Contract No.", ContractNo);
-        ContractLine.SetFilter("Subscription Header No.", '<>%1', '');
-        if ContractLine.FindSet() then
-            repeat
-                QtyHistory.SetRange(SubscriptionHeaderNo085SKC, ContractLine."Subscription Header No.");
-                QtyHistory.SetRange(InterimBilled085SKC, false);
-                QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
-                if not QtyHistory.IsEmpty() then
-                    exit(true);
-            until ContractLine.Next() = 0;
-        exit(false);
-    end;
-
-    // --- Event Subscribers ---
-
-    procedure IsInterimBillingEnabled(): Boolean
-    var
-        Setup: Record "Subscription Contract Setup";
-    begin
-        exit(Setup.Get() and Setup.EnableInterimBilling085SKC);
     end;
 
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales Documents", 'OnAfterInsertBillingLineArchiveOnMoveBillingLineToBillingLineArchive', '', false, false)]
@@ -343,5 +295,54 @@ codeunit 70631064 InterimBillingMgmt085SKC
                         ContractLine."Subscription Header No.",
                         ContractNo);
             until ContractLine.Next() = 0;
+    end;
+
+    /// <summary>
+    /// Keeps an interim charge billing only the quantity that was added.
+    ///
+    /// Codeunit 8060 builds the sales line with
+    /// <c>SalesLine.Validate(Quantity, GetSign() * ServiceObject.Quantity)</c>, so
+    /// it takes the subscription's current quantity and recomputes the amount from
+    /// it. For an interim charge that is wrong twice over: the pre-existing
+    /// quantity is billed a second time for the remainder of a period it was
+    /// already paid for, and the amount calculated by interim billing is discarded.
+    ///
+    /// Several billing lines for one subscription line are aggregated into a single
+    /// temporary line with their unit prices summed, so the correction is applied
+    /// only where the temporary line stands for exactly one billing line and that
+    /// line is an interim charge. Anything aggregated is left to standard behaviour
+    /// rather than guessed at.
+    /// </summary>
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Create Billing Documents", 'OnBeforeInsertSalesLineFromContractLine', '', false, false)]
+    local procedure PreserveInterimQuantityOnBeforeInsertSalesLine(var SalesLine: Record "Sales Line"; var TempBillingLine: Record "Billing Line" temporary)
+    var
+        BillingLine: Record "Billing Line";
+        Sign: Integer;
+    begin
+        if not IsInterimBillingEnabled() then
+            exit;
+
+        BillingLine.SetRange("Subscription Contract No.", TempBillingLine."Subscription Contract No.");
+        BillingLine.SetRange("Subscription Line Entry No.", TempBillingLine."Subscription Line Entry No.");
+        BillingLine.SetRange("Billing from", TempBillingLine."Billing from");
+        BillingLine.SetRange("Billing to", TempBillingLine."Billing to");
+        BillingLine.SetRange(Rebilling, TempBillingLine.Rebilling);
+        if BillingLine.Count() <> 1 then
+            exit;
+        BillingLine.FindFirst();
+
+        if not BillingLine.InterimBilling085SKC then
+            exit;
+        if BillingLine."Service Object Quantity" = 0 then
+            exit;
+        if SalesLine.Quantity = BillingLine."Service Object Quantity" then
+            exit;
+
+        // GetSign on Billing Line is internal, so the direction already applied by
+        // standard code is reused rather than recomputed.
+        Sign := 1;
+        if SalesLine.Quantity < 0 then
+            Sign := -1;
+        SalesLine.Validate(Quantity, Sign * BillingLine."Service Object Quantity");
     end;
 }
