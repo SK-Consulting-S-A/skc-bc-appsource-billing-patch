@@ -52,6 +52,29 @@ Adds a Role Center cue part showing subscription lines approaching their end dat
 - Drill-down opens a filtered list with actions to view billing status or open the contract
 - Embedded in the **Subscription Billing Role Center**
 
+### Contract Status
+
+Derives a lifecycle status for every customer subscription contract from the aggregate state of its subscription lines, so a contract list answers "what is actually still running" without opening each card.
+
+- **Active** — at least one open line with no imminent expiration
+- **Expiring** — at least one open line ending within 90 days
+- **Ending** — every open line already has an end date, so the contract is winding down
+- **Closed** — all lines are closed
+- Colour-coded on the **Customer Contracts** list and the **Customer Contract** card
+- Maintained automatically by event subscribers on Subscription Line and Cust. Sub. Contract Line changes, with a **Refresh Status** action and a batch recalculation entry point
+
+### Billing Readiness
+
+Answers the question a billing run cannot: which subscription lines are set up in a way that guarantees a wrong or missing invoice. Available both as a Role Center cue part and as a per-contract check.
+
+- **Zero-price lines** — active lines with a quantity but no price, which produce zero-amount invoices
+- **Contracts with zero-price lines** — the contracts behind those lines
+- **Stale billing** — lines overdue by more than one full Billing Rhythm cycle plus a 14-day grace period. The deadline is computed from each line's own rhythm, so monthly, quarterly, and yearly subscriptions are judged correctly instead of against one fixed day count
+- **No contract assigned** — active lines not attached to any customer contract, which can never be billed
+- **No next billing date** — active lines that never appear in a billing proposal
+- Every cue drills down to the offending lines or contracts
+- **Check Billing Readiness** action on the Customer Contract card reports the same checks for a single contract
+
 ### Billing Status & History
 
 A detailed status card for any subscription line, combining live billing state with historical invoice data.
@@ -113,9 +136,14 @@ invoice transaction, so nothing recurring can be forgotten.
 Extends standard Subscription Billing pages with additional fields and actions.
 
 - **Service Commitments** — editable Next Billing Date (for migration fixes), Next Invoice Amount, Auto-Renewal toggle, actions to Set End Date, Cancel, Reopen, Show Billing Status, and Open Contract
+- **Customer Contracts (list)** — colour-coded Contract Status
 - **Customer Contract Line Subpage** — Next Invoice Amount, Subscription Closed indicator, Open Subscription action
-- **Customer Contract** — Create Interim Billing action
+- **Closed Customer Contract Line Subpage** — Open Subscription action
+- **Customer Contract** — Contract Status, Check Billing Readiness, Refresh Status, and Create Interim Billing actions
+- **Get Vendor Contract Lines** — Select All, Deselect All, and select or deselect every line of the current contract in one step
+- **Recurring Billing** — deferral method and dynamic deferral template stamped on each proposal line
 - **Service Object** — Quantity history assist-edit and list part
+- **Service Objects (list)** — derived subscription status (Active, Partially Closed, Closed), Version, and a dimension-value filter with a matching clear action
 - **Subscription Contract Setup** — default deferral method, customer and vendor
   dynamic deferral templates, and the dynamic deferral analysis log
 - **Deferral Template Card and List** — Dynamic Subscription Schedule toggle,

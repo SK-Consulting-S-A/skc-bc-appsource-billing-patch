@@ -4,9 +4,9 @@ using Microsoft.SubscriptionBilling;
 
 page 70631073 SubExpiringActivities085SKC
 {
+    Caption = 'Subscriptions Expiring';
     PageType = CardPart;
     SourceTable = SubExpiringCue085SKC;
-    Caption = 'Subscriptions Expiring';
 
     layout
     {
@@ -78,6 +78,13 @@ page 70631073 SubExpiringActivities085SKC
         ComputeExpiringCues();
     end;
 
+    var
+        ArchiveCloseCheck: Codeunit SubArchiveCloseCheck085SKC;
+        ArchiveFixDoneMsg: Label 'Archive-based Next Billing Date fix completed. %1 line(s) corrected.', Comment = '%1 = Fixed count';
+        ConfirmArchiveFixMsg: Label 'This will correct the Next Billing Date on %1 subscription line(s) from the billing archive and close the lines that qualify.\\Do you want to continue?', Comment = '%1 = Line count';
+        DaysFormulaTok: Label '<+%1D>', Locked = true;
+        NoArchiveFixableMsg: Label 'No subscription lines need an archive-based Next Billing Date correction.';
+
     local procedure ComputeExpiringCues()
     var
         SubLine: Record "Subscription Line";
@@ -100,6 +107,28 @@ page 70631073 SubExpiringActivities085SKC
         Rec.Modify();
     end;
 
+    local procedure DrillDownEndDatePassed()
+    var
+        SubLine: Record "Subscription Line";
+    begin
+        SubLine.SetRange(Closed, false);
+        SubLine.SetRange(Partner, SubLine.Partner::Customer);
+        SubLine.SetRange(AutoRenewal085SKC, false);
+        SubLine.SetFilter("Subscription Line End Date", '%1..%2', 19000101D, CalcDate('<-1D>', Today));
+        Page.Run(Page::SubExpiringSubLines085SKC, SubLine);
+    end;
+
+    local procedure DrillDownExpiring(Days: Integer)
+    var
+        SubLine: Record "Subscription Line";
+    begin
+        SubLine.SetRange(Closed, false);
+        SubLine.SetRange(Partner, SubLine.Partner::Customer);
+        SubLine.SetRange(AutoRenewal085SKC, false);
+        SubLine.SetFilter("Subscription Line End Date", '%1..%2', Today, CalcDate(StrSubstNo(DaysFormulaTok, Days), Today));
+        Page.Run(Page::SubExpiringSubLines085SKC, SubLine);
+    end;
+
     local procedure RunArchiveCloseFix()
     var
         FixedCount: Integer;
@@ -114,32 +143,4 @@ page 70631073 SubExpiringActivities085SKC
         CurrPage.Update(false);
         Message(ArchiveFixDoneMsg, FixedCount);
     end;
-
-    local procedure DrillDownExpiring(Days: Integer)
-    var
-        SubLine: Record "Subscription Line";
-    begin
-        SubLine.SetRange(Closed, false);
-        SubLine.SetRange(Partner, SubLine.Partner::Customer);
-        SubLine.SetRange(AutoRenewal085SKC, false);
-        SubLine.SetFilter("Subscription Line End Date", '%1..%2', Today, CalcDate(StrSubstNo('<+%1D>', Days), Today));
-        Page.Run(Page::SubExpiringSubLines085SKC, SubLine);
-    end;
-
-    local procedure DrillDownEndDatePassed()
-    var
-        SubLine: Record "Subscription Line";
-    begin
-        SubLine.SetRange(Closed, false);
-        SubLine.SetRange(Partner, SubLine.Partner::Customer);
-        SubLine.SetRange(AutoRenewal085SKC, false);
-        SubLine.SetFilter("Subscription Line End Date", '%1..%2', 19000101D, CalcDate('<-1D>', Today));
-        Page.Run(Page::SubExpiringSubLines085SKC, SubLine);
-    end;
-
-    var
-        ArchiveCloseCheck: Codeunit SubArchiveCloseCheck085SKC;
-        NoArchiveFixableMsg: Label 'No subscription lines need an archive-based Next Billing Date correction.';
-        ConfirmArchiveFixMsg: Label 'This will correct the Next Billing Date on %1 subscription line(s) from the billing archive and close the lines that qualify.\\Do you want to continue?', Comment = '%1 = Line count';
-        ArchiveFixDoneMsg: Label 'Archive-based Next Billing Date fix completed. %1 line(s) corrected.', Comment = '%1 = Fixed count';
 }
