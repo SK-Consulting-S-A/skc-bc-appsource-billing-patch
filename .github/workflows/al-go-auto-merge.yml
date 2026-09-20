@@ -1,0 +1,103 @@
+name: AL-Go Auto-Merge
+
+# Automatically merges AL-Go's own "Update AL-Go System Files" pull requests once their
+# CI run succeeds, but only when every hard gate below is satisfied. Anything else is
+# left untouched for normal human review. This never bypasses the org branch ruleset —
+# it supplies the one real approval the ruleset already requires, from a distinct
+# identity (github-actions[bot]), only after Pull Request Build has passed.
+
+on:
+  workflow_run:
+    workflows: ["Pull Request Build"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge-al-go-update:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify gates and merge if safe
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const TRUSTED_LOGINS = new Set(['al-go-auth-app-skc[bot]', 'skonsbruck']);
+            const TITLE_PATTERN = /^\[[^\]]+@[0-9a-f]+\] Update AL-Go System Files from microsoft\/AL-Go-(PTE|AppSource)@main/;
+            const ALLOWED_PATH_PREFIXES = ['.github/', '.AL-Go/'];
+
+            const runPRs = context.payload.workflow_run.pull_requests || [];
+            if (runPRs.length !== 1) {
+              core.info(`workflow_run reports ${runPRs.length} pull request(s) — expected exactly 1, skipping.`);
+              return;
+            }
+
+            const prNumber = runPRs[0].number;
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.state !== 'open' || pr.draft) {
+              core.info(`PR #${prNumber} is not open or is a draft — skipping.`);
+              return;
+            }
+
+            if (!TRUSTED_LOGINS.has(pr.user.login)) {
+              core.info(`PR #${prNumber} author "${pr.user.login}" is not a trusted AL-Go automation identity — leaving for manual review.`);
+              return;
+            }
+
+            if (!TITLE_PATTERN.test(pr.title)) {
+              core.info(`PR #${prNumber} title "${pr.title}" does not match the AL-Go system-file update pattern — leaving for manual review.`);
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const offenders = files
+              .map(f => f.filename)
+              .filter(name => !ALLOWED_PATH_PREFIXES.some(prefix => name.startsWith(prefix)));
+
+            if (offenders.length > 0) {
+              core.info(`PR #${prNumber} touches non-system-file path(s): ${offenders.join(', ')} — leaving for manual review.`);
+              return;
+            }
+
+            core.info(`PR #${prNumber} passed all gates (trusted author, expected title, system-file-only diff, green CI) — approving and merging.`);
+
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              event: 'APPROVE',
+              body: 'Automated approval: AL-Go system-file-only update from a trusted identity with a green Pull Request Build run.',
+            });
+
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'squash',
+            });
+
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${pr.head.ref}`,
+              });
+            } catch (err) {
+              core.warning(`Could not delete branch ${pr.head.ref}: ${err.message}`);
+            }
