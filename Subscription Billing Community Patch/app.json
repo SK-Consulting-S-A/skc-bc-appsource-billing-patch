@@ -11,6 +11,7 @@
   "contextSensitiveHelpUrl": "https://www.skc.lu/solveit/help/",
   "url": "https://www.skc.lu",
   "logo": "logo.png",
+  "applicationInsightsConnectionString": "InstrumentationKey=52a256df-9a40-4169-8fa6-2a9acc8853a7;IngestionEndpoint=https://westeurope-5.in.applicationinsights.azure.com/",
   "dependencies": [
     {
       "id": "3099ffc7-4cf7-4df6-9b96-7e4bc2bb587c",
