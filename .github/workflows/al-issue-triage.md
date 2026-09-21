@@ -46,6 +46,12 @@ safe-outputs:
     max: 1
     target: "*"
 model: claude-sonnet-5
+concurrency:
+  # Without a discriminator every dispatch shares one group, so a batch of
+  # dispatches (for example from the reconciliation sweep) leaves only the first
+  # and last run alive - GitHub keeps a single pending run per group and cancels
+  # the rest. Keying on the issue number gives each issue its own slot.
+  job-discriminator: ${{ github.event.inputs.issue_number }}
 run-name: "Issue Triage Agent – BC AL #${{ github.event.inputs.issue_number }}"
 engine:
   id: copilot
@@ -167,6 +173,9 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 - [ ] <Criterion 1 — specific, testable>
 - [ ] <Criterion 2>
 - [ ] Compiles with zero errors and zero AppSourceCop/LinterCop violations
+
+**Open questions:**
+- <Anything the request does not settle, or "None">
 ```
 
 - If the issue was too brief (e.g. one-line description), fill in the "What needs to change" and "Acceptance Criteria" sections with your best interpretation based on the source context, and add a note: `> ⚠️ Description was brief — the above is inferred from source. Reporter should confirm.`
@@ -258,12 +267,22 @@ This marker tells the target-repository dispatcher that a later human reply is a
 
 ### Issues opened from a Business Central case
 
-If the issue body contains `<!-- bc-case-context -->`, this issue was created by Business Central from an approved case. Business Central owns the functional approval; GitHub owns the **technical** approval, and that is recorded by the `skc-tech-approved` label, which only a human applies.
+If the issue body contains `<!-- bc-case-context -->`, this issue was created by Business Central from an approved case.
 
-- Do **not** apply `ready-to-implement` unless the issue already carries `skc-tech-approved`, no matter how complete the body looks. A BC-written specification reads as ready, and without this rule `al-new-feature-dispatch.yml` would start coding before an architect has looked at it.
-- Everything else in triage still runs. Enrich the body, write `<!-- skc-triage-context -->`, set the type and `Priority`, and apply `question` or `needs-triage` when they apply. Skipping triage entirely would leave the issue with no triage marker, and the reconciliation sweep would then re-queue it and eventually label it `agent-not-processable`.
+**The body is a functional specification, not a technical one.** It is what the customer and the architect agreed under `## Functional specification (approved in Business Central)`: the behaviour wanted, in business language, with no AL objects in it. Business Central deliberately sends nothing developer-facing, because writing the technical specification is your job on these issues. Treat the functional text as the requirement and never edit it — a human approved that wording.
+
+So on a BC-sourced issue the context block you write in step 3 is the technical specification the developer works from, and it has to stand on its own. Beyond the normal headings, it must name the AL objects and procedures that change, and it must be traceable to the functional text above it:
+
+- Give **Affected Object** and **Related Procedure / Action** real values. If the source research in step 2 found nothing, say so explicitly and list what you searched, rather than leaving a placeholder — on these issues an unknown object means a human has to do the analysis, which is worth saying out loud.
+- Write **Acceptance Criteria** that a reviewer can check against the functional specification, one criterion per behaviour the customer asked for.
+- Record anything the functional specification does not settle under a `**Open questions:**` list. Do not invent behaviour to fill a gap; an open question sent back is cheaper than code built on a guess.
+
+Business Central owns the functional approval. GitHub owns the **technical** approval, and that is recorded by the `skc-tech-approved` label, which only a human applies after reading the specification you wrote.
+
+- Do **not** apply `ready-to-implement` unless the issue already carries `skc-tech-approved`, no matter how complete the body looks. Your own technical specification reads as ready by construction, and without this rule `al-new-feature-dispatch.yml` would start coding from an analysis no architect has seen.
 - Never apply `skc-tech-approved` or `skc-planned` yourself. Those are the human and Business Central sides of the handshake.
-- In your step 7 comment, say that the issue came from Business Central case `<number>` and is waiting for `skc-tech-approved` before implementation can be queued.
+- Everything else in triage still runs: set the type and `Priority`, and apply `question` or `needs-triage` when they apply. Skipping triage entirely would leave the issue with no triage marker, and the reconciliation sweep would then re-queue it and eventually label it `agent-not-processable`.
+- In your step 7 comment, say that the issue came from Business Central case `<number>`, that the technical specification is now on the issue, and that it is waiting for `skc-tech-approved` before implementation can be queued.
 
 ---
 
