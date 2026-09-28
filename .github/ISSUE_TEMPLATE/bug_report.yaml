@@ -7,42 +7,76 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please provide the AL object and Business Central version so the triage agent can
-        locate the relevant source and avoid guessing.
+        Describe the customer or user problem in business terms. SKC triage will identify
+        the affected AL objects and technical solution. If this issue came from a Business
+        Central case, provide the case number or portal link so the two records stay connected.
   - type: input
-    id: affected_object
+    id: case_number
     attributes:
-      label: Affected AL object
-      description: Object type, ID, and name if known; a partial name is acceptable.
-      placeholder: Page 50100 "ECDF Declaration Wizard"
+      label: Business Central case number
+      description: Required when this issue originated from a case; leave blank for a new GitHub-only report.
+      placeholder: CASE-000123
+    validations:
+      required: false
+  - type: input
+    id: case_url
+    attributes:
+      label: Business Central case link
+      description: Link to the case in the SKC portal, when available.
+      placeholder: https://portal.skc.lu/cases/...
+    validations:
+      required: false
+  - type: input
+    id: application
+    attributes:
+      label: SKC application
+      description: The SKC application or product where the problem occurs. Do not guess an AL object.
+      placeholder: SK Customizations, Fisqal Project Management, or customer extension name
     validations:
       required: true
   - type: input
     id: bc_version
     attributes:
       label: Business Central version
-      description: Application version and environment where the issue occurred.
-      placeholder: 27.0 SaaS sandbox
+      description: Platform/application version, if known.
+      placeholder: 28.0.0.0
     validations:
       required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: SaaS/on-premises, sandbox/production, tenant, and company when relevant.
+      placeholder: SaaS production, tenant Contoso, company CRONUS
+    validations:
+      required: true
+  - type: input
+    id: skc_app_version
+    attributes:
+      label: SKC application version
+      description: Installed SKC/customer extension version or commit, if known.
+      placeholder: 28.0.818.0 or commit abc1234
+    validations:
+      required: false
   - type: textarea
     id: what_happens
     attributes:
-      label: What happens
-      description: Include the exact error text when available.
+      label: What is happening
+      description: Describe the actual business impact, who is affected, and the exact error text when available.
     validations:
       required: true
   - type: textarea
     id: what_should_happen
     attributes:
-      label: What should happen instead
-      description: State the expected, testable behavior.
+      label: What should happen
+      description: State the expected business behavior in testable terms.
     validations:
       required: true
   - type: textarea
     id: repro
     attributes:
-      label: Steps to reproduce
+      label: How can we reproduce it?
+      description: Give the business steps, inputs, and records needed. Write "not reproducible" and explain why when applicable.
       placeholder: |
         1. Open ...
         2. Set ...
@@ -51,9 +85,16 @@ body:
     validations:
       required: true
   - type: textarea
+    id: impact
+    attributes:
+      label: Business impact and workaround
+      description: Explain whether work is blocked, how widespread the problem is, and any workaround in use.
+    validations:
+      required: true
+  - type: textarea
     id: evidence
     attributes:
       label: Screenshots, stack traces, or telemetry
-      description: Optional evidence; screenshots can be inspected by the triage agent.
+      description: Optional supporting evidence. Remove secrets, tokens, and personal data before attaching files.
     validations:
       required: false
