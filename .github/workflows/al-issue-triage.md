@@ -45,7 +45,12 @@ safe-outputs:
   update-issue:
     max: 1
     target: "*"
-model: claude-sonnet-5
+model: gpt-6-luna
+engine:
+  id: copilot
+  version: "1.0.89"
+  env:
+    COPILOT_HOME: /tmp/gh-aw/copilot-home
 concurrency:
   # Without a discriminator every dispatch shares one group, so a batch of
   # dispatches (for example from the reconciliation sweep) leaves only the first
@@ -53,11 +58,29 @@ concurrency:
   # the rest. Keying on the issue number gives each issue its own slot.
   job-discriminator: ${{ github.event.inputs.issue_number }}
 run-name: "Issue Triage Agent – BC AL #${{ github.event.inputs.issue_number }}"
-engine:
-  id: copilot
 network:
   allowed:
     - github
+steps:
+  - name: Configure scoped Copilot model settings
+    run: |
+      set -euo pipefail
+      mkdir -p /tmp/gh-aw/copilot-home
+      cat > /tmp/gh-aw/copilot-home/settings.json <<'JSON'
+      {
+        "builtInAgents": { "rubberDuck": false },
+        "effortLevel": "xhigh",
+        "contextTier": "long_context",
+        "subagents": { "agents": {
+          "general-purpose": { "model": "gpt-6-sol", "modelPolicy": "required", "effortLevel": "xhigh", "contextTier": "long_context" },
+          "security-review": { "model": "gpt-6-sol", "modelPolicy": "required", "effortLevel": "xhigh", "contextTier": "long_context" }
+        } }
+      }
+      JSON
+post-steps:
+  - name: Remove scoped Copilot settings
+    if: always()
+    run: rm -rf /tmp/gh-aw/copilot-home
 env:
   AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
   AL_ISSUE_TRIAGE_ACTION: ${{ github.event.inputs.issue_action || 'opened' }}
@@ -67,6 +90,8 @@ env:
 # Issue Triage Agent – BC AL
 
 When the issue triage dispatcher requests analysis for an issue in this repository, perform the following steps:
+
+Use Luna for routine classification and source-grounded context. Escalate only ambiguous object ownership, cross-module design, security, or readiness decisions to `general-purpose` or `security-review` (GPT-6 Sol) for one focused second opinion. Do not use the escalation model to fill gaps with guesses; preserve the existing clarification and human-approval rules.
 
 ## 0. Resolve the Issue and Pre-check for Skips
 
