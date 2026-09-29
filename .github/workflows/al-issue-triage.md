@@ -51,6 +51,7 @@ model: copilot/gpt-6-luna
 engine:
   id: pi
   version: "0.87.1"
+  driver: .github/drivers/pi_responses_driver.cjs
 concurrency:
   # Without a discriminator every dispatch shares one group, so a batch of
   # dispatches (for example from the reconciliation sweep) leaves only the first

@@ -45,6 +45,7 @@ model: copilot/gpt-6-sol
 engine:
   id: pi
   version: "0.87.1"
+  driver: .github/drivers/pi_responses_driver.cjs
 max-turns: 30
 timeout-minutes: 15
 concurrency:
