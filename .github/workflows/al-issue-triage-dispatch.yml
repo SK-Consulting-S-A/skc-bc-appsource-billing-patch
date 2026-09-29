@@ -16,6 +16,9 @@ on:
     types: [created]
   schedule:
     - cron: "17 */6 * * *"
+  workflow_run:
+    workflows: ["Issue Triage Agent – BC AL", "GPT-6 Sol Issue Triage Recovery"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       issue_number:
@@ -33,11 +36,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: triage-dispatch-${{ github.repository_id }}-${{ github.event.issue.number || github.event.inputs.issue_number || github.event_name }}
+  group: triage-dispatch-${{ github.repository_id }}-${{ github.event.workflow_run.id || github.event.issue.number || github.event.inputs.issue_number || github.event_name }}
   cancel-in-progress: false
 
 env:
   TRIAGE_WORKFLOW: al-issue-triage.lock.yml
+  TRIAGE_SOL_WORKFLOW: al-issue-triage-sol.lock.yml
   TRIAGE_MARKER: '<!-- skc-triage-context -->'
   TRIAGE_MARKER_LEGACY: '### Context (added by skc-bc-internal-agents triage)'
   LABEL_REQUEUED: triage-requeued
@@ -48,6 +52,113 @@ env:
   SWEEP_MAX_PER_RUN: '10'
 
 jobs:
+  recover_incomplete_triage:
+    name: Recover an incomplete Luna run with Sol once
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'Issue Triage Agent – BC AL' && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'timed_out')
+    steps:
+      - name: Check verdict and dispatch one Sol recovery
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const run = context.payload.workflow_run;
+            if (run.event !== 'workflow_dispatch' || !run.path?.split('@', 1)[0].endsWith('/al-issue-triage.lock.yml') ||
+                run.head_repository?.full_name !== `${owner}/${repo}`) return;
+            const match = /^Issue Triage Agent – BC AL #([1-9]\d*)$/.exec(run.display_title || '');
+            if (!match) return;
+            const issueNumber = Number(match[1]);
+            const { data: repository } = await github.rest.repos.get({ owner, repo });
+            if (run.head_branch !== repository.default_branch) return;
+
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+            const labels = issue.labels.map(label => typeof label === 'string' ? label : label.name);
+            const body = issue.body || '';
+            if (issue.state !== 'open' || issue.pull_request ||
+                body.includes(process.env.TRIAGE_MARKER) || body.includes(process.env.TRIAGE_MARKER_LEGACY) ||
+                labels.some(label => ['ready-to-implement', 'implemented', process.env.LABEL_DISPUTED, process.env.LABEL_NOT_PROCESSABLE].includes(label)) ||
+                ['[aw]', '[agent]', 'Org Issue Scan', 'Triage Report', 'CI Failure:'].some(prefix => issue.title.startsWith(prefix)) ||
+                body.includes('<!-- gh-aw-failure-issue')) return;
+
+            const recoveryTitle = `Issue Triage Sol Recovery #${issueNumber} (Luna run ${run.id})`;
+            try {
+              for (let page = 1; page <= 3; page++) {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner, repo, workflow_id: process.env.TRIAGE_SOL_WORKFLOW,
+                  event: 'workflow_dispatch', branch: repository.default_branch, per_page: 100, page,
+                });
+                if (data.workflow_runs.some(candidate => candidate.display_title === recoveryTitle)) {
+                  core.info(`Sol recovery for Luna run ${run.id} already exists.`);
+                  return;
+                }
+                if (data.workflow_runs.length < 100) break;
+                if (page === 3) throw new Error('Sol recovery history exceeds the bounded search; cannot prove this is the first attempt.');
+              }
+
+              await github.rest.actions.createWorkflowDispatch({
+                owner, repo, workflow_id: process.env.TRIAGE_SOL_WORKFLOW, ref: repository.default_branch,
+                inputs: { issue_number: String(issueNumber), origin_run_id: String(run.id) },
+              });
+              core.info(`Dispatched one Sol recovery for issue #${issueNumber} after Luna run ${run.id} (${run.conclusion}).`);
+            } catch (error) {
+              core.error(`Cannot verify or dispatch Sol recovery for issue #${issueNumber}: ${error.message}`);
+              try {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: issueNumber,
+                  labels: ['needs-triage', process.env.LABEL_NOT_PROCESSABLE],
+                });
+                const marker = `<!-- skc-triage-sol-dispatch-failed:${run.id} -->`;
+                const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+                if (!comments.some(comment => (comment.body || '').includes(marker))) {
+                  await github.rest.issues.createComment({
+                    owner, repo, issue_number: issueNumber,
+                    body: `${marker}\n\nAutomated triage could not verify or start the one Sol recovery attempt. A human should review the issue and [Luna run](${run.html_url}) before retrying.`,
+                  });
+                }
+              } catch (handoffError) {
+                core.error(`Cannot mark issue #${issueNumber} for human triage: ${handoffError.message}`);
+              }
+              throw error;
+            }
+
+  record_failed_recovery:
+    name: Hand off incomplete Sol recovery to a human
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.name == 'GPT-6 Sol Issue Triage Recovery' && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'timed_out')
+    steps:
+      - name: Mark the issue for human triage
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8 (Node 24)
+        with:
+          github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN || github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const run = context.payload.workflow_run;
+            if (run.event !== 'workflow_dispatch' || !run.path?.split('@', 1)[0].endsWith('/al-issue-triage-sol.lock.yml') ||
+                run.head_repository?.full_name !== `${owner}/${repo}`) return;
+            const match = /^Issue Triage Sol Recovery #([1-9]\d*) \(Luna run ([1-9]\d*)\)$/.exec(run.display_title || '');
+            if (!match) return;
+            const issueNumber = Number(match[1]);
+            const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+            if (issue.state !== 'open' || issue.pull_request ||
+                (issue.body || '').includes(process.env.TRIAGE_MARKER) ||
+                (issue.body || '').includes(process.env.TRIAGE_MARKER_LEGACY)) return;
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number: issueNumber,
+              labels: ['needs-triage', process.env.LABEL_NOT_PROCESSABLE],
+            });
+            const marker = `<!-- skc-triage-sol-recovery:${run.id} -->`;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+            if (comments.some(comment => (comment.body || '').includes(marker))) return;
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: issueNumber,
+              body: `${marker}\n\nAutomated triage could not finish with Luna or the one Sol recovery attempt. A human should review the issue and [failed recovery run](${run.html_url}) before retrying. No automatic readiness verdict was issued.`,
+            });
+
   dispatch_event:
     name: Dispatch from issue event
     runs-on: ubuntu-latest
