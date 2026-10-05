@@ -22,6 +22,12 @@ tools:
     toolsets: [default]
 safe-outputs:
   github-token: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+  threat-detection:
+    # Keep recovery detection off the incompatible GPT-6 Copilot adapter.
+    engine:
+      id: copilot
+      model: gpt-4.1
+    continue-on-error: false
   noop: false
   add-labels:
     max: 6
@@ -34,7 +40,7 @@ safe-outputs:
   set-issue-field:
     max: 2
     target: "*"
-    allowed-fields: [Priority, Field Effort]
+    allowed-fields: [Priority, Effort]
   add-comment:
     max: 1
     target: "*"
@@ -54,6 +60,7 @@ run-name: "Issue Triage Sol Recovery #${{ github.event.inputs.issue_number }} (L
 network:
   allowed:
     - github
+    - documentation.isabel.eu
 env:
   AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}
   AL_ISSUE_TRIAGE_ACTION: opened

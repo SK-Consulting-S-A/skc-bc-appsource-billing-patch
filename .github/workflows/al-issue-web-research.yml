@@ -1,0 +1,80 @@
+name: "Issue Web Research"
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+concurrency:
+  group: web-research-${{ github.repository_id }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    if: github.event.label.name == 'web-research' && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      approved: ${{ steps.gate.outputs.approved }}
+      issue_number: ${{ steps.gate.outputs.issue_number }}
+      research_urls: ${{ steps.gate.outputs.research_urls }}
+      research_query: ${{ steps.gate.outputs.research_query }}
+      research_hosts: ${{ steps.gate.outputs.research_hosts }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify maintainer approval and public destinations
+        id: gate
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { approveResearch } = require('./.github/scripts/web_research_gate.cjs');
+            await approveResearch({ github, context, core });
+
+  research:
+    needs: approve
+    if: needs.approve.outputs.approved == 'true'
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+      # gh-aw's generated comment/conclusion jobs also request this scope.
+      # The research agent itself retains permissions: {}.
+      pull-requests: write
+    uses: ./.github/workflows/al-issue-web-research-agent.lock.yml
+    with:
+      issue_number: ${{ needs.approve.outputs.issue_number }}
+      research_urls: ${{ needs.approve.outputs.research_urls }}
+      research_query: ${{ needs.approve.outputs.research_query }}
+      network_allowed: ${{ needs.approve.outputs.research_hosts }}
+    secrets: inherit
+
+  handoff:
+    needs: [approve, research]
+    if: needs.research.result == 'success' && needs.approve.outputs.approved == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify research report and requeue Luna triage
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESEARCH_ISSUE_NUMBER: ${{ needs.approve.outputs.issue_number }}
+        with:
+          script: |
+            const { handoffResearch } = require('./.github/scripts/web_research_gate.cjs');
+            const result = await handoffResearch({ github, context, core, issueNumber: process.env.RESEARCH_ISSUE_NUMBER });
+            if (!result) core.setFailed('Research report was not handed off to triage.');
+            else core.info(`Dispatched Luna for issue #${result.issueNumber}, research comment ${result.commentId}.`);

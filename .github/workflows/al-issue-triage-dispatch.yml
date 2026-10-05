@@ -311,7 +311,17 @@ jobs:
 
             const commenterLogin = currentComment.user?.login || 'unknown';
             const commenterIsBot = currentComment.user?.type === 'Bot' || commenterLogin.endsWith('[bot]');
-            if (commenterIsBot) {
+            // Research has its own verified handoff; a PAT-authored report is
+            // still automation even when its GitHub author type is User.
+            const commentBody = currentComment.body || '';
+            const researchReport = commentBody.startsWith('<!-- skc-web-research:') ||
+              [...commentBody.matchAll(/<!-- gh-aw-agentic-workflow:((?:(?!-->|<!--)[\s\S])*)-->/g)]
+                .some(match => {
+                  const workflows = [...match[1].matchAll(/(?:^|[,\r\n])\s*workflow_id:\s*([^,\r\n]+)\s*(?=,|$)/g)];
+                  return workflows.length === 1 &&
+                    workflows[0][1].trim() === 'al-issue-web-research-agent';
+                });
+            if (commenterIsBot || researchReport) {
               core.info(`Ignoring clarification comment from bot account ${commenterLogin}.`);
               return;
             }

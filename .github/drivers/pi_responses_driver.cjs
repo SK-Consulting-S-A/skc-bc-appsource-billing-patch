@@ -11,7 +11,7 @@ const supportedModels = new Set(['gpt-6-luna', 'gpt-6-sol']);
 function isInternalGatewayHost(hostname, env) {
     if (hostname === 'api-proxy') return true;
     if (hostname !== 'host.docker.internal' || !env.HOSTALIASES ||
-            (env.GH_AW_API_PROXY_HOST_BRIDGE && env.GH_AW_API_PROXY_HOST_BRIDGE !== hostname)) return false;
+        (env.GH_AW_API_PROXY_HOST_BRIDGE && env.GH_AW_API_PROXY_HOST_BRIDGE !== hostname)) return false;
     try {
         return fs.readFileSync(env.HOSTALIASES, 'utf8').split(/\r?\n/).some(line => {
             const [alias, target] = line.replace(/#.*/, '').trim().split(/\s+/);
@@ -75,7 +75,9 @@ function piArguments(modelId, runnerTemp, originalDir) {
     if (extensions.some(extension => !fs.existsSync(extension)))
         throw new Error('Required gh-aw Pi extension is missing.');
     if (modelId === 'gpt-6-luna') {
-        const solReview = path.join(originalDir, 'extensions', 'sol-review.js');
+        // Custom workflow steps stage files under RUNNER_TEMP, not the /tmp
+        // directory used by the generated models.json.
+        const solReview = path.join(runnerTemp, 'gh-aw', 'pi-agent-dir', 'extensions', 'sol-review.js');
         if (!fs.existsSync(solReview)) throw new Error('Staged Sol review extension is missing.');
         extensions.push(solReview);
     }
