@@ -68,6 +68,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Download pre-agent documentation extraction metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: public-documentation-extraction
+          path: /tmp/gh-aw/public-documentation-extraction
       - name: Verify research report and requeue Luna triage
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -75,6 +80,20 @@ jobs:
         with:
           script: |
             const { handoffResearch } = require('./.github/scripts/web_research_gate.cjs');
-            const result = await handoffResearch({ github, context, core, issueNumber: process.env.RESEARCH_ISSUE_NUMBER });
+            const fs = require('node:fs');
+            const manifestPath = '/tmp/gh-aw/public-documentation-extraction/extraction-manifest.json';
+            let extractionManifest;
+            try {
+              const metadata = fs.lstatSync(manifestPath);
+              if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > 16 * 1024) {
+                throw new Error('Invalid extraction manifest file.');
+              }
+              const contents = fs.readFileSync(manifestPath);
+              if (contents.length > 16 * 1024) throw new Error('Extraction manifest is too large.');
+              extractionManifest = JSON.parse(contents.toString('utf8'));
+            } catch {
+              extractionManifest = undefined;
+            }
+            const result = await handoffResearch({ github, context, core, issueNumber: process.env.RESEARCH_ISSUE_NUMBER, extractionManifest });
             if (!result) core.setFailed('Research report was not handed off to triage.');
             else core.info(`Dispatched Luna for issue #${result.issueNumber}, research comment ${result.commentId}.`);
