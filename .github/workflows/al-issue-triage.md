@@ -38,7 +38,8 @@ safe-outputs:
   add-labels:
     max: 6
     target: "*"
-    allowed: [documentation, question, security, needs-triage, ready-to-implement]
+    allowed:
+      [documentation, question, security, needs-triage, ready-to-implement]
   set-issue-type:
     max: 1
     target: "*"
@@ -204,7 +205,9 @@ Trusted dispatch inputs (resolved by GitHub Actions, not supplied by the issue):
 1. Use the trusted dispatch inputs above as the authoritative values. Read and print the corresponding environment variables to check runtime propagation:
    - `echo "Issue number: $AL_ISSUE_TRIAGE_ISSUE_NUMBER"`
    - `echo "Issue action: $AL_ISSUE_TRIAGE_ACTION"`
-  - `echo "Comment ID  : $AL_ISSUE_TRIAGE_COMMENT_ID"`
+
+- `echo "Comment ID  : $AL_ISSUE_TRIAGE_COMMENT_ID"`
+
 2. A missing environment variable alone does not mean the dispatch input is missing. If it is empty, use the corresponding trusted dispatch value above for all reads and safe-output targets. Call `missing_data` with `data_type: "issue_number"` only after checking that both the trusted issue-number input and its environment variable are empty. Never assume an input is missing without checking it. After a successful `missing_data` tool call, stop immediately without narrative text or retries.
 3. Read that issue explicitly by number from the current repository.
 4. Because this workflow runs via `workflow_dispatch`, **all safe output writes must provide the issue number explicitly**:
@@ -282,7 +285,7 @@ Read the issue title and body carefully. Note the reporter's exact words — do 
 
 Draft a structured verdict **before** calling any safe-output write tool (including `update-issue`): issue number; proposed type, labels, priority, effort, and readiness; cited issue/source evidence for each; unresolved questions; and whether the issue affects security, multiple modules, or automatic implementation. An absent fact is `unknown`, never an invented default. Keep this verdict as a working plan; do not publish it as a claim of completed triage until the checks below pass.
 
-In Luna mode, call `review_with_sol` **once**, with the disputed decision and relevant evidence, if *any* of these conditions holds:
+In Luna mode, call `review_with_sol` **once**, with the disputed decision and relevant evidence, if _any_ of these conditions holds:
 
 - Object ownership or source evidence conflicts, is missing, or is insufficient for the proposed verdict.
 - The issue crosses BC modules or has a security or permission impact.
@@ -304,7 +307,9 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 
 ```markdown
 ---
+
 <!-- skc-triage-context -->
+
 ### Context (added by skc-bc-internal-agents triage)
 
 **Affected Object:** `<ObjectType> <ID> <ObjectName>` (file: `<path/to/file.al>`)
@@ -317,11 +322,13 @@ Using what you found in step 2, rewrite the issue body to make it implementation
 <Concrete restatement of the request, referencing the actual object and procedure names.>
 
 **Acceptance Criteria:**
+
 - [ ] <Criterion 1 — specific, testable>
 - [ ] <Criterion 2>
 - [ ] Compiles with zero errors and zero AppSourceCop/LinterCop violations
 
 **Open questions:**
+
 - <Anything the request does not settle, or "None">
 ```
 
@@ -366,6 +373,7 @@ Type is a structured GitHub issue type, not a label. Call `set_issue_type` once:
 - `Task` – documentation, question, or other work that is neither a defect nor a new feature
 
 ### Topic labels (apply any that fit)
+
 - `documentation` – documentation update needed
 - `question` – needs clarification or information
 - `security` – potential security concern
