@@ -53,7 +53,6 @@ jobs:
       issue_number: ${{ needs.approve.outputs.issue_number }}
       research_urls: ${{ needs.approve.outputs.research_urls }}
       research_query: ${{ needs.approve.outputs.research_query }}
-      network_allowed: ${{ needs.approve.outputs.research_hosts }}
     secrets: inherit
 
   handoff:

@@ -109,6 +109,7 @@ function canonicalizeResearchUrl(candidate) {
     labels.some(
       (label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label),
     ) ||
+    /(?:^|\.)github\.com$/.test(hostname) ||
     /(?:^|\.)(?:localhost|local|internal|test|invalid|example)$/.test(hostname)
   ) {
     throw new Error("Research requires a public DNS hostname.");
@@ -338,6 +339,7 @@ function validateExtractionManifest(
         "head_sha",
         "approved_urls",
         "state",
+        "crawl_truncated",
         "sources",
       ]) ||
       manifest.schema_version !== 1 ||
@@ -347,7 +349,8 @@ function validateExtractionManifest(
       headSha.length !== 40 ||
       !/^[a-f0-9]{40}$/.test(headSha) ||
       manifest.head_sha !== headSha ||
-      manifest.state !== "complete"
+      manifest.state !== "complete" ||
+      manifest.crawl_truncated !== false
     )
       return false;
     const approvedUrls = extractResearchUrls(originalBody);
@@ -357,21 +360,30 @@ function validateExtractionManifest(
       new Set(manifest.approved_urls).size !== approvedUrls.length ||
       !manifest.approved_urls.every((url) => approvedUrls.includes(url)) ||
       !Array.isArray(manifest.sources) ||
-      manifest.sources.length !== approvedUrls.length
+      manifest.sources.length < approvedUrls.length ||
+      manifest.sources.length > 10
     )
       return false;
     const sourceUrls = new Set();
+    const sourceByUrl = new Map();
+    const rootUrls = new Set();
     for (const source of manifest.sources) {
       if (
         !hasOnlyKeys(source, [
           "source_url",
+          "root_url",
+          "parent_url",
+          "depth",
           "method",
           "state",
           "sha256",
           "body_characters",
           "truncated",
         ]) ||
-        !approvedUrls.includes(source.source_url) ||
+        typeof source.source_url !== "string" ||
+        typeof source.root_url !== "string" ||
+        !Number.isSafeInteger(source.depth) ||
+        source.depth < 0 || source.depth > 2 ||
         sourceUrls.has(source.source_url) ||
         !["http", "rendered"].includes(source.method) ||
         source.state !== "complete" ||
@@ -381,12 +393,57 @@ function validateExtractionManifest(
         !Number.isSafeInteger(source.body_characters) ||
         source.body_characters < 80 ||
         source.body_characters > 48_000 ||
-        source.truncated !== false
+        source.truncated !== false ||
+        !isCrawlableResearchUrl(source.source_url, approvedUrls, source.root_url)
       )
         return false;
+      if (source.depth === 0) {
+        if (
+          source.source_url !== source.root_url ||
+          source.parent_url !== null ||
+          !approvedUrls.includes(source.source_url) ||
+          rootUrls.has(source.source_url)
+        ) return false;
+        rootUrls.add(source.source_url);
+      } else {
+        const parent = sourceByUrl.get(source.parent_url);
+        if (
+          !parent ||
+          !approvedUrls.includes(source.root_url) ||
+          parent.root_url !== source.root_url ||
+          parent.depth + 1 !== source.depth ||
+          !isCrawlableResearchUrl(source.parent_url, approvedUrls, source.root_url)
+        ) return false;
+      }
       sourceUrls.add(source.source_url);
+      sourceByUrl.set(source.source_url, source);
     }
-    return true;
+    return approvedUrls.every((url) => rootUrls.has(url));
+  } catch {
+    return false;
+  }
+}
+
+// Keep the path exclusions in sync with the extraction driver's
+// isCrawlableDocumentationUrl. This gate is embedded standalone in workflows.
+function isCrawlableResearchUrl(value, approvedUrls, rootUrl) {
+  if (typeof value !== "string" || /[\s\\?#\u0000-\u001f\u007f]/u.test(value))
+    return false;
+  try {
+    if (!approvedUrls.includes(rootUrl) || canonicalizeResearchUrl(value) !== value)
+      return false;
+    const url = new URL(value);
+    const root = new URL(rootUrl);
+    const pathname = decodeURIComponent(url.pathname);
+    if (url.origin !== root.origin || /[\\\u0000-\u001f\u007f%]/u.test(pathname))
+      return false;
+    if (url.hostname === "raw.githubusercontent.com" &&
+        (url.pathname.split("/").length < 5 ||
+         url.pathname.split("/").slice(1, 4).join("/") !==
+           root.pathname.split("/").slice(1, 4).join("/") ||
+         !/\.(?:md|markdown|rst|txt)$/iu.test(pathname))) return false;
+    return !/(?:^|\/)(?:assets|static|downloads?|archives?|media|uploads)(?:\/|$)/iu.test(pathname) &&
+      !/\.(?:js|mjs|cjs|css|png|jpe?g|gif|svg|ico|webp|avif|bmp|tiff?|pdf|zip|gz|tgz|tar|bz2|xz|7z|rar|exe|msi|dll|bin|dmg|iso|deb|rpm|sh|bat|cmd|ps1|py|jar|woff2?|ttf|eot|map|wasm)(?:[?#]|$)/iu.test(pathname);
   } catch {
     return false;
   }
