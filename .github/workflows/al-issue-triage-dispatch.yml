@@ -8,6 +8,9 @@ name: "Issue Triage Dispatcher"
 # gh-aw-failure-issue HTML comment) are not AL work. Skip them here so the
 # triage agent is never asked to no-op: noop is disabled, and a missing-tool
 # report would open another [aw] issue.
+#
+# Issues labeled research-canary are research-pipeline test fixtures: they are
+# never triaged or dispatched by this workflow (events, comments or the sweep).
 
 on:
   issues:
@@ -176,6 +179,7 @@ jobs:
       !contains(github.event.issue.labels.*.name, 'ci-failure-analysis') &&
       !contains(github.event.issue.labels.*.name, 'implemented') &&
       !contains(github.event.issue.labels.*.name, 'agentic-workflows') &&
+      !contains(github.event.issue.labels.*.name, 'research-canary') &&
       (
         github.event.action != 'labeled' ||
         (
@@ -289,6 +293,7 @@ jobs:
     if: |
       github.event_name == 'issue_comment' &&
       !github.event.issue.pull_request &&
+      !contains(github.event.issue.labels.*.name, 'research-canary') &&
       !contains(github.event.comment.body, '/not-accurate') &&
       github.event.comment.user.type != 'Bot' &&
       !endsWith(github.event.comment.user.login, '[bot]')
@@ -502,7 +507,7 @@ jobs:
                 title.startsWith('CI Failure:') || body.includes('<!-- ci-analysis-context -->') ||
                 body.includes('<!-- gh-aw-failure-issue') ||
                 labels.includes('ci-failure-analysis') || labels.includes('implemented') ||
-                labels.includes('agentic-workflows') ||
+                labels.includes('agentic-workflows') || labels.includes('research-canary') ||
                 labels.includes(process.env.LABEL_NOT_PROCESSABLE) || labels.includes(process.env.LABEL_DISPUTED);
             };
 
