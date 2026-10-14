@@ -24,7 +24,7 @@ permissions:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    if: github.event.label.name == 'ready-to-implement'
+    if: github.event.label.name == 'ready-to-implement' && !contains(github.event.issue.labels.*.name, 'research-canary')
     steps:
       - name: Dispatch al-new-feature agent
         id: dispatch
