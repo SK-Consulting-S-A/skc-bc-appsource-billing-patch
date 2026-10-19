@@ -45,14 +45,14 @@ concurrency:
 env:
   TRIAGE_WORKFLOW: al-issue-triage.lock.yml
   TRIAGE_SOL_WORKFLOW: al-issue-triage-sol.lock.yml
-  TRIAGE_MARKER: '<!-- skc-triage-context -->'
-  TRIAGE_MARKER_LEGACY: '### Context (added by skc-bc-internal-agents triage)'
+  TRIAGE_MARKER: "<!-- skc-triage-context -->"
+  TRIAGE_MARKER_LEGACY: "### Context (added by skc-bc-internal-agents triage)"
   LABEL_REQUEUED: triage-requeued
   LABEL_NOT_PROCESSABLE: agent-not-processable
   LABEL_DISPUTED: triage-disputed
-  SETTLE_SECONDS: '120'
-  SWEEP_LOOKBACK_DAYS: '14'
-  SWEEP_MAX_PER_RUN: '10'
+  SETTLE_SECONDS: "120"
+  SWEEP_LOOKBACK_DAYS: "14"
+  SWEEP_MAX_PER_RUN: "10"
 
 jobs:
   recover_incomplete_triage:
