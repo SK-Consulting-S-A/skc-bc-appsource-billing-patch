@@ -13,17 +13,73 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
     Access = Internal;
 
     Permissions =
-        tabledata "Subscription Line" = RM,
-        tabledata "Subscription Header" = RM,
-        tabledata "Billing Line Archive" = R,
         tabledata "Billing Line" = R,
+        tabledata "Billing Line Archive" = R,
         tabledata "Cust. Sub. Contract Line" = RM,
+        tabledata "Subscription Header" = RM,
+        tabledata "Subscription Line" = RM,
         tabledata "Vend. Sub. Contract Line" = RM;
 
     var
-        NbdFixedTxt: Label 'Entry %1: NBD corrected from %2 to %3 (billed through %4)', Locked = true;
-        LineClosedTxt: Label 'Entry %1 auto-closed after NBD fix (End Date %2)', Locked = true;
         BatchCompletedTxt: Label 'Archive NBD fix completed. Fixed: %1, Closed: %2, Skipped: %3', Locked = true;
+        LineClosedTxt: Label 'Entry %1 auto-closed after NBD fix (End Date %2)', Locked = true;
+        NbdFixedTxt: Label 'Entry %1: NBD corrected from %2 to %3 (billed through %4)', Locked = true;
+
+    /// <summary>
+    /// Counts how many lines would be fixed by FixArchiveCompletedLines.
+    /// Used for the role center cue.
+    /// </summary>
+    procedure CountFixableLines(): Integer
+    var
+        SubLine: Record "Subscription Line";
+        FixableCount: Integer;
+    begin
+        SubLine.SetRange(Closed, false);
+        SubLine.SetFilter("Next Billing Date", '<>%1', 0D);
+        SubLine.SetLoadFields("Entry No.", Closed, "Next Billing Date");
+        if not SubLine.FindSet() then
+            exit(0);
+
+        repeat
+            if IsArchiveFixable(SubLine) then
+                FixableCount += 1;
+        until SubLine.Next() = 0;
+
+        exit(FixableCount);
+    end;
+
+    /// <summary>
+    /// Batch: fixes the Next Billing Date on all lines where the archive
+    /// proves billing went further than the current NBD. For lines where
+    /// the fix satisfies the standard closing condition (End Date = NBD - 1),
+    /// closes them directly.
+    /// </summary>
+    procedure FixArchiveCompletedLines(): Integer
+    var
+        SubLine: Record "Subscription Line";
+        ClosedCount: Integer;
+        FixedCount: Integer;
+        SkippedCount: Integer;
+    begin
+        SubLine.SetRange(Closed, false);
+        SubLine.SetFilter("Next Billing Date", '<>%1', 0D);
+        if SubLine.FindSet(true) then
+            repeat
+                if FixNextBillingDate(SubLine) then begin
+                    FixedCount += 1;
+                    if TryCloseLine(SubLine) then
+                        ClosedCount += 1;
+                end else
+                    SkippedCount += 1;
+            until SubLine.Next() = 0;
+
+        Session.LogMessage('SKC-0070',
+            StrSubstNo(BatchCompletedTxt, FixedCount, ClosedCount, SkippedCount),
+            Verbosity::Normal, DataClassification::SystemMetadata, TelemetryScope::ExtensionPublisher,
+            'FixedCount', Format(FixedCount), 'ClosedCount', Format(ClosedCount));
+
+        exit(FixedCount);
+    end;
 
     /// <summary>
     /// Returns the latest "Billing to" date from posted invoices in the
@@ -34,6 +90,7 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
         BillingArchive: Record "Billing Line Archive";
         MaxBilledTo: Date;
     begin
+        MaxBilledTo := 0D;
         BillingArchive.SetRange("Subscription Line Entry No.", SubLineEntryNo);
         BillingArchive.SetRange("Document Type", BillingArchive."Document Type"::Invoice);
         BillingArchive.SetLoadFields("Billing to");
@@ -69,62 +126,6 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
 
         CorrectNBD := BilledThrough + 1;
         exit(CorrectNBD > SubLine."Next Billing Date");
-    end;
-
-    /// <summary>
-    /// Counts how many lines would be fixed by FixArchiveCompletedLines.
-    /// Used for the role center cue.
-    /// </summary>
-    procedure CountFixableLines(): Integer
-    var
-        SubLine: Record "Subscription Line";
-        FixableCount: Integer;
-    begin
-        SubLine.SetRange(Closed, false);
-        SubLine.SetFilter("Next Billing Date", '<>%1', 0D);
-        SubLine.SetLoadFields("Entry No.", Closed, "Next Billing Date");
-        if not SubLine.FindSet() then
-            exit(0);
-
-        repeat
-            if IsArchiveFixable(SubLine) then
-                FixableCount += 1;
-        until SubLine.Next() = 0;
-
-        exit(FixableCount);
-    end;
-
-    /// <summary>
-    /// Batch: fixes the Next Billing Date on all lines where the archive
-    /// proves billing went further than the current NBD. For lines where
-    /// the fix satisfies the standard closing condition (End Date = NBD - 1),
-    /// closes them directly.
-    /// </summary>
-    procedure FixArchiveCompletedLines(): Integer
-    var
-        SubLine: Record "Subscription Line";
-        FixedCount: Integer;
-        ClosedCount: Integer;
-        SkippedCount: Integer;
-    begin
-        SubLine.SetRange(Closed, false);
-        SubLine.SetFilter("Next Billing Date", '<>%1', 0D);
-        if SubLine.FindSet(true) then
-            repeat
-                if FixNextBillingDate(SubLine) then begin
-                    FixedCount += 1;
-                    if TryCloseLine(SubLine) then
-                        ClosedCount += 1;
-                end else
-                    SkippedCount += 1;
-            until SubLine.Next() = 0;
-
-        Session.LogMessage('SKC-0070',
-            StrSubstNo(BatchCompletedTxt, FixedCount, ClosedCount, SkippedCount),
-            Verbosity::Normal, DataClassification::SystemMetadata, TelemetryScope::ExtensionPublisher,
-            'FixedCount', Format(FixedCount), 'ClosedCount', Format(ClosedCount));
-
-        exit(FixedCount);
     end;
 
     local procedure FixNextBillingDate(var SubLine: Record "Subscription Line"): Boolean
@@ -164,10 +165,10 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
     /// </summary>
     local procedure TryCloseLine(var SubLine: Record "Subscription Line"): Boolean
     var
-        SubHeader: Record "Subscription Header";
         CustContractLine: Record "Cust. Sub. Contract Line";
-        VendContractLine: Record "Vend. Sub. Contract Line";
+        SubHeader: Record "Subscription Header";
         SiblingLine: Record "Subscription Line";
+        VendContractLine: Record "Vend. Sub. Contract Line";
         AllClosed: Boolean;
     begin
         if SubLine."Subscription Line End Date" = 0D then

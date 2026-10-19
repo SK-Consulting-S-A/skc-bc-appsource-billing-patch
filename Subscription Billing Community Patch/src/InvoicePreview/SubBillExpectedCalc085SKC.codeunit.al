@@ -22,11 +22,35 @@ codeunit 70631069 SubBillExpectedCalc085SKC
 {
     Access = Internal;
     Permissions =
-        tabledata "Subscription Line" = R,
-        tabledata "Subscription Header" = R,
         tabledata "Billing Line" = R,
         tabledata "Billing Line Archive" = R,
-        tabledata Currency = R;
+        tabledata Currency = R,
+        tabledata "Subscription Header" = R,
+        tabledata "Subscription Line" = R;
+
+    /// <summary>
+    /// Period end date honouring the line's Period Calculation setting.
+    /// </summary>
+    procedure CalculatePeriodEnd(SubLine: Record "Subscription Line"; PeriodFormula: DateFormula; PeriodStart: Date): Date
+    var
+        LastDateInLastMonth: Date;
+        ReferenceDate: Date;
+        DistanceToEndOfMonth: Integer;
+    begin
+        case SubLine."Period Calculation" of
+            SubLine."Period Calculation"::"Align to Start of Month":
+                exit(CalcDate(PeriodFormula, PeriodStart) - 1);
+            SubLine."Period Calculation"::"Align to End of Month":
+                begin
+                    ReferenceDate := GetBillingReferenceDate(SubLine);
+                    DistanceToEndOfMonth := CalcDate('<CM>', ReferenceDate) - ReferenceDate;
+                    if DistanceToEndOfMonth > 2 then
+                        exit(CalcDate(PeriodFormula, PeriodStart) - 1);
+                    LastDateInLastMonth := CalcDate('<CM>', CalcDate(PeriodFormula, PeriodStart));
+                    exit(LastDateInLastMonth - DistanceToEndOfMonth - 1);
+                end;
+        end;
+    end;
 
     /// <summary>
     /// Expected unit price, quantity and amount for a billing period, following the
@@ -37,11 +61,11 @@ codeunit 70631069 SubBillExpectedCalc085SKC
     var
         Currency: Record Currency;
         PeriodFormula: DateFormula;
-        PeriodPrice: Decimal;
         BillingPeriodRatio: Decimal;
-        PeriodCount: Integer;
+        PeriodPrice: Decimal;
         FollowUpDays: Integer;
         FollowUpPeriodDays: Integer;
+        PeriodCount: Integer;
     begin
         Clear(ExpectedUnitPrice);
         Clear(ExpectedQuantity);
@@ -91,8 +115,8 @@ codeunit 70631069 SubBillExpectedCalc085SKC
     var
         Currency: Record Currency;
         FullPeriodUnitPrice: Decimal;
-        UnusedQuantity: Decimal;
         UnusedAmount: Decimal;
+        UnusedQuantity: Decimal;
         PeriodDays: Integer;
         WindowDays: Integer;
     begin
@@ -120,38 +144,14 @@ codeunit 70631069 SubBillExpectedCalc085SKC
         exit(ProRataUnitPrice <> 0);
     end;
 
-    /// <summary>
-    /// Period end date honouring the line's Period Calculation setting.
-    /// </summary>
-    procedure CalculatePeriodEnd(SubLine: Record "Subscription Line"; PeriodFormula: DateFormula; PeriodStart: Date): Date
-    var
-        ReferenceDate: Date;
-        LastDateInLastMonth: Date;
-        DistanceToEndOfMonth: Integer;
-    begin
-        case SubLine."Period Calculation" of
-            SubLine."Period Calculation"::"Align to Start of Month":
-                exit(CalcDate(PeriodFormula, PeriodStart) - 1);
-            SubLine."Period Calculation"::"Align to End of Month":
-                begin
-                    ReferenceDate := GetBillingReferenceDate(SubLine);
-                    DistanceToEndOfMonth := CalcDate('<CM>', ReferenceDate) - ReferenceDate;
-                    if DistanceToEndOfMonth > 2 then
-                        exit(CalcDate(PeriodFormula, PeriodStart) - 1);
-                    LastDateInLastMonth := CalcDate('<CM>', CalcDate(PeriodFormula, PeriodStart));
-                    exit(LastDateInLastMonth - DistanceToEndOfMonth - 1);
-                end;
-        end;
-    end;
-
     local procedure CalculatePeriodCountAndDaysCount(SubLine: Record "Subscription Line"; PeriodFormula: DateFormula; StartDate: Date; EndDate: Date; var PeriodCount: Integer; var FollowUpDays: Integer; var FollowUpPeriodDays: Integer)
     var
         DateFormulaManagement: Codeunit "Date Formula Management";
-        LastDayInPreviousPeriod: Date;
-        LastDayInNextPeriod: Date;
         CumulativeFormula: DateFormula;
-        FormulaInteger: Integer;
         Letter: Char;
+        LastDayInNextPeriod: Date;
+        LastDayInPreviousPeriod: Date;
+        FormulaInteger: Integer;
     begin
         Clear(PeriodCount);
         Clear(FollowUpDays);
@@ -181,8 +181,8 @@ codeunit 70631069 SubBillExpectedCalc085SKC
     local procedure GetBillingPeriodRatio(BillingRhythm: DateFormula; BillingBasePeriod: DateFormula): Decimal
     var
         DateFormulaManagement: Codeunit "Date Formula Management";
-        BillingPeriodCount: Integer;
         BillingBasePeriodCount: Integer;
+        BillingPeriodCount: Integer;
     begin
         DateFormulaManagement.FindDateFormulaTypeForComparison(BillingRhythm, BillingPeriodCount);
         DateFormulaManagement.FindDateFormulaTypeForComparison(BillingBasePeriod, BillingBasePeriodCount);

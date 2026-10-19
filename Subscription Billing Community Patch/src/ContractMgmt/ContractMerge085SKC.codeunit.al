@@ -8,16 +8,26 @@ codeunit 70631060 ContractMerge085SKC
     TableNo = "Customer Subscription Contract";
 
     var
-        MergeLog: TextBuilder;
         DryRun: Boolean;
         ContractsMerged: Integer;
-        LinesMoved: Integer;
         Errors: Integer;
-
-    procedure SetDryRun(NewDryRun: Boolean)
-    begin
-        DryRun := NewDryRun;
-    end;
+        LinesMoved: Integer;
+        ContractsMergedTxt: Label 'Contracts merged (emptied & deleted): %1', Locked = true;
+        CustomerMergeTxt: Label 'Customer %1: %2 contracts -> merging into %3', Locked = true;
+        CustomersWithContractsTxt: Label 'Customers with contracts: %1', Locked = true;
+        DeletedSourceTxt: Label '    Deleted source contract %1', Locked = true;
+        DryDeleteSourceTxt: Label '    [DRY] Would delete source contract %1', Locked = true;
+        DryMoveLineTxt: Label '    [DRY] Would move line %1-%2 (Entry %3: %4) -> %5-%6', Locked = true;
+        ErrDeletingContractTxt: Label '    ERROR deleting contract %1', Locked = true;
+        ErrDeletingSourceTxt: Label '    ERROR deleting source contract %1', Locked = true;
+        ErrInsertLineTxt: Label '    ERROR inserting line %1-%2 for entry %3', Locked = true;
+        ErrorsTxt: Label 'Errors: %1', Locked = true;
+        ErrUpdateSubLineTxt: Label '    ERROR updating sub line entry %1', Locked = true;
+        LinesMovedTxt: Label 'Lines moved to target contracts: %1', Locked = true;
+        MovedLineTxt: Label '    Moved: %1-%2 -> %3-%4 (Entry %5: %6)', Locked = true;
+        MovingLinesTxt: Label '  %1 -> %2: moving %3 lines', Locked = true;
+        NoLinesDeletingTxt: Label '  %1: no lines, deleting empty contract', Locked = true;
+        MergeLog: TextBuilder;
 
     procedure GetLog(): Text
     begin
@@ -34,8 +44,8 @@ codeunit 70631060 ContractMerge085SKC
     procedure MergeAllByCustomer()
     var
         Contract: Record "Customer Subscription Contract";
-        CustomerList: List of [Code[20]];
         CustomerNo: Code[20];
+        CustomerList: List of [Code[20]];
     begin
         ContractsMerged := 0;
         LinesMoved := 0;
@@ -54,16 +64,36 @@ codeunit 70631060 ContractMerge085SKC
                     CustomerList.Add(Contract."Sell-to Customer No.");
             until Contract.Next() = 0;
 
-        Log(StrSubstNo('Customers with contracts: %1', CustomerList.Count()));
+        Log(StrSubstNo(CustomersWithContractsTxt, CustomerList.Count()));
 
         foreach CustomerNo in CustomerList do
             MergeContractsForCustomer(CustomerNo);
 
         Log('');
         Log('=== SUMMARY ===');
-        Log(StrSubstNo('Contracts merged (emptied & deleted): %1', ContractsMerged));
-        Log(StrSubstNo('Lines moved to target contracts: %1', LinesMoved));
-        Log(StrSubstNo('Errors: %1', Errors));
+        Log(StrSubstNo(ContractsMergedTxt, ContractsMerged));
+        Log(StrSubstNo(LinesMovedTxt, LinesMoved));
+        Log(StrSubstNo(ErrorsTxt, Errors));
+    end;
+
+    procedure SetDryRun(NewDryRun: Boolean)
+    begin
+        DryRun := NewDryRun;
+    end;
+
+    local procedure GetNextLineNo(ContractNo: Code[20]): Integer
+    var
+        ContractLine: Record "Cust. Sub. Contract Line";
+    begin
+        ContractLine.SetRange("Subscription Contract No.", ContractNo);
+        if ContractLine.FindLast() then
+            exit(ContractLine."Line No." + 10000);
+        exit(10000);
+    end;
+
+    local procedure Log(Msg: Text)
+    begin
+        MergeLog.AppendLine(Msg);
     end;
 
     local procedure MergeContractsForCustomer(CustomerNo: Code[20])
@@ -81,17 +111,17 @@ codeunit 70631060 ContractMerge085SKC
         TargetContractNo := Contract."No.";
 
         Log('');
-        Log(StrSubstNo('Customer %1: %2 contracts -> merging into %3',
+        Log(StrSubstNo(CustomerMergeTxt,
             CustomerNo, ContractCount, TargetContractNo));
 
         Contract.FindSet();
         repeat
             if Contract."No." <> TargetContractNo then
-                MoveContractLines(Contract."No.", TargetContractNo, CustomerNo);
+                MoveContractLines(Contract."No.", TargetContractNo);
         until Contract.Next() = 0;
     end;
 
-    local procedure MoveContractLines(SourceContractNo: Code[20]; TargetContractNo: Code[20]; CustomerNo: Code[20])
+    local procedure MoveContractLines(SourceContractNo: Code[20]; TargetContractNo: Code[20])
     var
         SourceLine: Record "Cust. Sub. Contract Line";
         SourceContract: Record "Customer Subscription Contract";
@@ -102,19 +132,19 @@ codeunit 70631060 ContractMerge085SKC
         SourceLineCount := SourceLine.Count();
 
         if SourceLineCount = 0 then begin
-            Log(StrSubstNo('  %1: no lines, deleting empty contract', SourceContractNo));
+            Log(StrSubstNo(NoLinesDeletingTxt, SourceContractNo));
             if not DryRun then
                 if SourceContract.Get(SourceContractNo) then
                     if SourceContract.Delete(false) then
                         ContractsMerged += 1
                     else begin
-                        Log(StrSubstNo('    ERROR deleting contract %1', SourceContractNo));
+                        Log(StrSubstNo(ErrDeletingContractTxt, SourceContractNo));
                         Errors += 1;
                     end;
             exit;
         end;
 
-        Log(StrSubstNo('  %1 -> %2: moving %3 lines',
+        Log(StrSubstNo(MovingLinesTxt,
             SourceContractNo, TargetContractNo, SourceLineCount));
 
         NewLineNo := GetNextLineNo(TargetContractNo);
@@ -129,13 +159,13 @@ codeunit 70631060 ContractMerge085SKC
             if SourceContract.Get(SourceContractNo) then
                 if SourceContract.Delete(false) then begin
                     ContractsMerged += 1;
-                    Log(StrSubstNo('    Deleted source contract %1', SourceContractNo));
+                    Log(StrSubstNo(DeletedSourceTxt, SourceContractNo));
                 end else begin
-                    Log(StrSubstNo('    ERROR deleting source contract %1', SourceContractNo));
+                    Log(StrSubstNo(ErrDeletingSourceTxt, SourceContractNo));
                     Errors += 1;
                 end;
         end else
-            Log(StrSubstNo('    [DRY] Would delete source contract %1', SourceContractNo));
+            Log(StrSubstNo(DryDeleteSourceTxt, SourceContractNo));
     end;
 
     local procedure MoveSingleLine(var SourceLine: Record "Cust. Sub. Contract Line"; TargetContractNo: Code[20]; NewLineNo: Integer)
@@ -149,7 +179,7 @@ codeunit 70631060 ContractMerge085SKC
         Description := SourceLine."Subscription Line Description";
 
         if DryRun then begin
-            Log(StrSubstNo('    [DRY] Would move line %1-%2 (Entry %3: %4) -> %5-%6',
+            Log(StrSubstNo(DryMoveLineTxt,
                 SourceLine."Subscription Contract No.", SourceLine."Line No.",
                 SubEntryNo, Description,
                 TargetContractNo, NewLineNo));
@@ -161,7 +191,7 @@ codeunit 70631060 ContractMerge085SKC
         NewLine."Subscription Contract No." := TargetContractNo;
         NewLine."Line No." := NewLineNo;
         if not NewLine.Insert(false) then begin
-            Log(StrSubstNo('    ERROR inserting line %1-%2 for entry %3',
+            Log(StrSubstNo(ErrInsertLineTxt,
                 TargetContractNo, NewLineNo, SubEntryNo));
             Errors += 1;
             exit;
@@ -173,7 +203,7 @@ codeunit 70631060 ContractMerge085SKC
                 SubLine."Subscription Contract No." := TargetContractNo;
                 SubLine."Subscription Contract Line No." := NewLineNo;
                 if not SubLine.Modify(false) then begin
-                    Log(StrSubstNo('    ERROR updating sub line entry %1', SubEntryNo));
+                    Log(StrSubstNo(ErrUpdateSubLineTxt, SubEntryNo));
                     Errors += 1;
                     NewLine.Delete(false);
                     exit;
@@ -184,24 +214,9 @@ codeunit 70631060 ContractMerge085SKC
         SourceLine.Delete(false);
         LinesMoved += 1;
 
-        Log(StrSubstNo('    Moved: %1-%2 -> %3-%4 (Entry %5: %6)',
+        Log(StrSubstNo(MovedLineTxt,
             SourceLine."Subscription Contract No.", SourceLine."Line No.",
             TargetContractNo, NewLineNo,
             SubEntryNo, Description));
-    end;
-
-    local procedure GetNextLineNo(ContractNo: Code[20]): Integer
-    var
-        ContractLine: Record "Cust. Sub. Contract Line";
-    begin
-        ContractLine.SetRange("Subscription Contract No.", ContractNo);
-        if ContractLine.FindLast() then
-            exit(ContractLine."Line No." + 10000);
-        exit(10000);
-    end;
-
-    local procedure Log(Msg: Text)
-    begin
-        MergeLog.AppendLine(Msg);
     end;
 }
