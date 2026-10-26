@@ -60,6 +60,7 @@ run-name: "Issue Triage Sol Recovery #${{ github.event.inputs.issue_number }} (L
 network:
   allowed:
     - github
+    - github.com
     - documentation.isabel.eu
 env:
   AL_ISSUE_TRIAGE_ISSUE_NUMBER: ${{ github.event.inputs.issue_number }}

@@ -69,6 +69,7 @@ run-name: "Issue Triage Agent – BC AL #${{ github.event.inputs.issue_number }}
 network:
   allowed:
     - github
+    - github.com
     - documentation.isabel.eu
 steps:
   - name: Stage scoped GPT-6 Sol review tool
