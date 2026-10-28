@@ -146,6 +146,8 @@ jobs:
               'al-new-feature', 'al-pr-review', 'al-pr-iterate', 'al-ci-fix', 'al-org-scan',
             ]);
             const generatedTitles = new Map([
+              ['al-issue-triage', 'Issue Triage Agent \u2013 BC AL'],
+              ['al-issue-triage-sol', 'GPT-6 Sol Issue Triage Recovery'],
               ['al-issue-web-research-agent', 'Public Documentation Research'],
               ['al-issue-web-research-v2-agent', 'Sealed Public Documentation Research'],
             ]);
