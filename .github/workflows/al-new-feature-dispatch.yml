@@ -20,6 +20,7 @@ on:
 permissions:
   actions: write
   issues: write
+  pull-requests: read
 
 jobs:
   dispatch:
@@ -37,13 +38,93 @@ jobs:
             const thisRepo = `${context.repo.owner}/${context.repo.repo}`;
             const isLocal  = (context.repo.repo === AGENT_REPO);
             const issueNumber = context.payload.issue.number;
+            const copilotLogin = /^(?:copilot|copilot-swe-agent)(?:\[bot\])?$/i;
+            const validLogin = /^[a-z0-9-]+(?:\[bot\])?$/i;
+            const linkedPullsQuery = 'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { issue(number: $number) { closedByPullRequestsReferences(first: 1, includeClosedPrs: false) { totalCount } } } }';
 
-            // When running in a target repo (not skc-bc-internal-agents), cross-repo dispatch
-            // requires GH_AW_GITHUB_MCP_SERVER_TOKEN with actions:write on skc-bc-internal-agents.
-            // The github.token fallback only covers the isLocal case.
-            // Fail fast if the PAT secret is absent from this repo's org secret grant.
+            async function ownershipReason() {
+              try {
+                if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new Error('invalid issue number');
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber,
+                });
+                if (!issue || issue.number !== issueNumber || typeof issue.state !== 'string' ||
+                    !Array.isArray(issue.assignees) ||
+                    issue.assignees.some(a => !a || typeof a.login !== 'string' || !validLogin.test(a.login)) ||
+                    !Array.isArray(issue.labels) ||
+                    issue.labels.some(label => typeof (typeof label === 'string' ? label : label?.name) !== 'string' ||
+                      !(typeof label === 'string' ? label : label.name))) {
+                  throw new Error('invalid issue response');
+                }
+                const labels = issue.labels.map(label => (typeof label === 'string' ? label : label.name).toLowerCase());
+                if (issue.state !== 'open' || issue.pull_request || !labels.includes('ready-to-implement')) return 'no longer an open ready issue';
+                if (labels.includes('research-canary')) return 'a research canary';
+                if (issue.assignees.some(a => copilotLogin.test(a.login))) return 'assigned to Copilot';
+
+                const linked = await github.graphql(linkedPullsQuery, {
+                  owner: context.repo.owner, repo: context.repo.repo, number: issueNumber,
+                });
+                if (linked != null && Object.hasOwn(linked, 'errors') && (!Array.isArray(linked.errors) || linked.errors.length)) {
+                  throw new Error('GraphQL returned errors');
+                }
+                const count = linked?.repository?.issue?.closedByPullRequestsReferences?.totalCount;
+                if (!Number.isSafeInteger(count) || count < 0) throw new Error('invalid linked pull request count');
+                return count > 0 ? 'an open closing PR is linked' : '';
+              } catch (error) {
+                core.warning(`Cannot verify implementation ownership for ${thisRepo}#${issueNumber}: ${error.message}.`);
+                return 'ownership could not be verified';
+              }
+            }
+
+            let owned = await ownershipReason();
+            if (owned) {
+              core.info(`Issue #${issueNumber} is ${owned} — skipping dispatch.`);
+              return;
+            }
+
+            // Check every page for the standard feature/<issueNumber>-* branch.
+            async function featurePrReason() {
+              try {
+                const openPulls = await github.paginate(github.rest.pulls.list, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  state: 'open',
+                  per_page: 100,
+                });
+                if (!Array.isArray(openPulls) ||
+                    openPulls.some(pr => typeof pr?.head?.ref !== 'string' || !pr.head.ref)) {
+                  throw new Error('invalid open pull request response');
+                }
+                return openPulls.some(pr => pr.head.ref.startsWith(`feature/${issueNumber}-`))
+                  ? 'an implementation PR is open' : '';
+              } catch (err) {
+                core.warning(
+                  `Could not check for an existing implementation PR on ${thisRepo} ` +
+                  `(status=${err.status ?? 'unknown'}): ${err.message}.`
+                );
+                return 'implementation PRs could not be verified';
+              }
+            }
+            let featurePr = await featurePrReason();
+            if (featurePr) {
+              core.info(`Issue #${issueNumber}: ${featurePr} — skipping dispatch.`);
+              return;
+            }
+
+            // Cross-repo dispatch requires a PAT with Actions write on the agent repo.
+            // Verify ownership first so an already-owned issue never receives a failure comment.
             const patAvailable = Boolean('${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}');
             if (!isLocal && !patAvailable) {
+              featurePr = await featurePrReason();
+              if (featurePr) {
+                core.info(`Issue #${issueNumber}: ${featurePr} — skipping failure comment.`);
+                return;
+              }
+              owned = await ownershipReason();
+              if (owned) {
+                core.info(`Issue #${issueNumber} is ${owned} — skipping dispatch.`);
+                return;
+              }
               const reason =
                 `GH_AW_GITHUB_MCP_SERVER_TOKEN is not available on ${thisRepo}. ` +
                 `Grant the org secret to this repository: GitHub → ${context.repo.owner} → ` +
@@ -57,34 +138,6 @@ jobs:
               return;
             }
 
-            // Guard: skip if the target repo already has an open implementation PR for this issue.
-            // Uses the standard branch naming convention feature/<issueNumber>-* from al-new-feature.
-            // This is more reliable than cross-referenced timeline events, which false-positive on
-            // any PR in any repo that merely mentions the issue URL (e.g. triage PRs, unrelated fix PRs).
-            let openPulls;
-            try {
-              const resp = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                state: 'open',
-                per_page: 100,
-              });
-              openPulls = resp.data;
-            } catch (err) {
-              core.warning(
-                `Could not check for an existing implementation PR on ${thisRepo} ` +
-                `(status=${err.status ?? 'unknown'}): ${err.message}. Continuing with dispatch.`
-              );
-              openPulls = [];
-            }
-            const hasLinkedPR = openPulls.some(pr => pr.head.ref.startsWith(`feature/${issueNumber}-`));
-            if (hasLinkedPR) {
-              core.info(
-                `Issue #${issueNumber} already has an open implementation PR — skipping dispatch.`
-              );
-              return;
-            }
-
             // Guard: skip if a workflow run for this same issue is already queued/in_progress.
             // This prevents the issue label trigger and the weekly org-scan from duplicating the
             // same implementation run for the same target issue.
@@ -93,16 +146,21 @@ jobs:
             let hasInFlightRun = false;
             try {
               for (const status of statuses) {
-                const { data } = await github.rest.actions.listWorkflowRuns({
+                const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
                   owner: AGENT_OWNER,
                   repo: AGENT_REPO,
                   workflow_id: workflowId,
                   status,
                   per_page: 100,
                 });
-                if ((data.workflow_runs || []).some(run => {
+                if (!Array.isArray(runs) || runs.length >= 1000 ||
+                    runs.some(run => !run || typeof run.event !== 'string' ||
+                      (run.inputs != null && (typeof run.inputs !== 'object' || Array.isArray(run.inputs))))) {
+                  throw new Error('invalid or incomplete workflow run response');
+                }
+                if (runs.some(run => {
                   const hasIssueInput = run.inputs && String(run.inputs.issue_number || '') === String(issueNumber);
-                  const hasTargetRepo = !run.inputs || !run.inputs.target_repo || String(run.inputs.target_repo || '') === String(thisRepo);
+                  const hasTargetRepo = !run.inputs || !run.inputs.target_repo || String(run.inputs.target_repo).toLowerCase() === thisRepo.toLowerCase();
                   return hasIssueInput && hasTargetRepo && (
                     run.event === 'workflow_dispatch' ||
                     (run.display_title || '').includes(`#${issueNumber}`) ||
@@ -115,8 +173,9 @@ jobs:
               }
             } catch (err) {
               core.warning(
-                `Could not inspect in-flight runs for ${workflowId}: ${err.message}. Continuing with dispatch.`
+                `Could not inspect in-flight runs for ${workflowId}: ${err.message}. Skipping dispatch.`
               );
+              return;
             }
             if (hasInFlightRun) {
               core.info(
@@ -135,6 +194,16 @@ jobs:
             // + octokit-core 5.x, where 500/503 responses surface as "fetch failed").
             let lastErr;
             for (let attempt = 1; attempt <= 3; attempt++) {
+              featurePr = await featurePrReason();
+              if (featurePr) {
+                core.info(`Issue #${issueNumber}: ${featurePr} — skipping dispatch.`);
+                return;
+              }
+              owned = await ownershipReason();
+              if (owned) {
+                core.info(`Issue #${issueNumber} is ${owned} — skipping dispatch.`);
+                return;
+              }
               try {
                 await github.rest.actions.createWorkflowDispatch({
                   owner: AGENT_OWNER,
@@ -161,6 +230,16 @@ jobs:
             }
 
             if (lastErr) {
+              featurePr = await featurePrReason();
+              if (featurePr) {
+                core.info(`Issue #${issueNumber}: ${featurePr} — skipping failure comment.`);
+                return;
+              }
+              owned = await ownershipReason();
+              if (owned) {
+                core.info(`Issue #${issueNumber} is ${owned} — skipping failure comment.`);
+                return;
+              }
               const status  = lastErr.status ?? 0;
               const isAuthError = status >= 400 && status < 500;
               let reason;
