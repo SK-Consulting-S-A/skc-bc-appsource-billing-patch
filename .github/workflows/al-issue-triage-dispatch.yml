@@ -37,8 +37,9 @@ env:
 jobs:
   # No concurrency here: Actions replaces pending jobs in a concurrency group.
   # Persist each manual request BEFORE entering the replaceable reconciler queue.
-  # GH_AW_GITHUB_MCP_SERVER_TOKEN is REQUIRED (user PAT with repo/actions/issues
-  # access). GITHUB_TOKEN cannot authenticate via GET /user. Never fall back.
+  # GH_AW_GITHUB_MCP_SERVER_TOKEN is REQUIRED (user PAT with actions/issues
+  # access plus contents and pull-requests read). GITHUB_TOKEN cannot
+  # authenticate via GET /user. Never fall back.
   # Reruns retain github.run_id and must retain the original issue/force intent.
   intake_manual:
     if: github.event_name == 'workflow_dispatch'
@@ -68,12 +69,19 @@ jobs:
             const { data: identity } = await github.rest.users.getAuthenticated();
             if (!Number.isSafeInteger(identity.id) || identity.id <= 0) throw new Error('Cannot authenticate manual intent author.');
             const value = { issue: issueNumber, run_id: runId, force: process.env.INPUT_FORCE === 'true' };
-            const body = `<!-- skc-triage-manual-intent:v1 ${JSON.stringify(value)} -->`;
+            const marker = `<!-- skc-triage-manual-intent:v1 ${JSON.stringify(value)} -->`;
+            // Keep in sync with intentNote() in the reconciler.
+            const body = `${marker}\n\n_Manual triage request recorded${value.force ? ' (force)' : ''}; the dispatcher processes it on its next reconciliation._`;
             const comments = await github.paginate(github.rest.issues.listComments, { ...parameters, per_page: 100 });
             if (comments.some(comment => comment.user?.id === identity.id &&
-              (comment.body === body || comment.body === `${body}\n<!-- skc-triage-manual-rejected:force-required -->`))) return;
+              (comment.body || '').split('\n')[0] === marker)) return;
             const { data: issue } = await github.rest.issues.get(parameters);
-            const labels = (issue.labels || []).map(label => String(typeof label === 'string' ? label : label.name).toLowerCase());
+            if (!issue || issue.number !== issueNumber || !Array.isArray(issue.labels) ||
+                issue.labels.some(label => typeof (typeof label === 'string' ? label : label?.name) !== 'string' ||
+                  !(typeof label === 'string' ? label : label.name))) {
+              throw new Error('Cannot verify issue labels; no manual intent recorded.');
+            }
+            const labels = issue.labels.map(label => (typeof label === 'string' ? label : label.name).toLowerCase());
             const title = issue.title || '';
             const text = issue.body || '';
             if (issue.pull_request || issue.state !== 'open' || labels.some(label => [
@@ -82,6 +90,28 @@ jobs:
                 ['[aw]', '[agentics]', '[agent]', 'Org Issue Scan', 'Triage Report', 'CI Failure:'].some(prefix => title.startsWith(prefix)) ||
                 title.includes('[agentics]') || title.includes('[agent]') || title.includes('Org Issue Scan') || title.includes('Triage Report') ||
                 text.includes('<!-- ci-analysis-context -->') || text.includes('<!-- gh-aw-failure-issue')) return;
+            // Issues owned by the Copilot coding agent or an open linked PR are
+            // implementation work, not triage. Unverifiable ownership records nothing.
+            if (!Array.isArray(issue.assignees) ||
+                issue.assignees.some(assignee => typeof assignee?.login !== 'string' ||
+                  !/^[a-z0-9-]+(?:\[bot\])?$/i.test(assignee.login))) {
+              throw new Error('Cannot verify issue assignees; no manual intent recorded.');
+            }
+            if (issue.assignees.some(assignee => /^(?:copilot|copilot-swe-agent)(?:\[bot\])?$/i.test(assignee.login))) {
+              core.info(`#${issueNumber} is assigned to the Copilot coding agent; no manual triage intent recorded.`);
+              return;
+            }
+            const linked = await github.graphql('query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { issue(number: $number) { closedByPullRequestsReferences(first: 1, includeClosedPrs: false) { totalCount } } } }',
+              { owner, repo, number: issueNumber });
+            if (linked != null && Object.hasOwn(linked, 'errors') && (!Array.isArray(linked.errors) || linked.errors.length)) {
+              throw new Error('Cannot verify linked pull requests; no manual intent recorded.');
+            }
+            const linkedCount = linked?.repository?.issue?.closedByPullRequestsReferences?.totalCount;
+            if (!Number.isSafeInteger(linkedCount) || linkedCount < 0) throw new Error('Cannot verify linked pull requests; no manual intent recorded.');
+            if (linkedCount > 0) {
+              core.info(`#${issueNumber} has an open linked pull request; no manual triage intent recorded.`);
+              return;
+            }
             const { data: saved } = await github.rest.issues.createComment({ ...parameters, body });
             if (saved.user?.id !== identity.id || !Number.isSafeInteger(saved.id) || saved.id <= 0 || saved.body !== body) {
               throw new Error('Manual intent persistence could not be authenticated; no dispatch attempted.');
@@ -133,7 +163,14 @@ jobs:
             const firstLine = comment => (comment.body || '').split(/\r?\n/, 1)[0];
             const clarificationMarker = '<!-- skc-triage-needs-clarification -->';
             const waitingComment = comment => currentAuthor(comment) && firstLine(comment) === clarificationMarker;
-            const labelsOf = issue => (issue.labels || []).map(label => String(typeof label === 'string' ? label : label.name).toLowerCase());
+            const labelsOf = issue => {
+              if (!Array.isArray(issue?.labels) ||
+                  issue.labels.some(label => typeof (typeof label === 'string' ? label : label?.name) !== 'string' ||
+                    !(typeof label === 'string' ? label : label.name))) {
+                throw new Error('Cannot verify issue labels.');
+              }
+              return issue.labels.map(label => (typeof label === 'string' ? label : label.name).toLowerCase());
+            };
             const hasContext = issue => (issue.body || '').includes('<!-- skc-triage-context -->') ||
               (issue.body || '').includes('### Context (added by skc-bc-internal-agents triage)');
             const timestamp = value => Date.parse(value || '') || 0;
@@ -150,11 +187,50 @@ jobs:
               ['al-issue-triage-sol', 'GPT-6 Sol Issue Triage Recovery'],
               ['al-issue-web-research-agent', 'Public Documentation Research'],
               ['al-issue-web-research-v2-agent', 'Sealed Public Documentation Research'],
+              ['al-org-scan', 'Org-Wide Issue Scan Agent'],
+              ['al-new-feature', 'New AL Feature Agent'],
+              ['al-pr-iterate', 'AL PR Iterate Agent'],
+              ['al-ci-fix', 'AL CI Fix Agent'],
             ]);
+            const copilotLogin = /^(?:copilot|copilot-swe-agent)(?:\[bot\])?$/i;
+            const validLogin = /^[a-z0-9-]+(?:\[bot\])?$/i;
+            const linkedPullsQuery = 'query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { issue(number: $number) { closedByPullRequestsReferences(first: 1, includeClosedPrs: false) { totalCount } } } }';
+            const ownershipCache = new Map();
+            // Copilot-assigned issues and issues with an open closing PR belong to
+            // implementation. A failed lookup is a skip, never permission to dispatch.
+            async function ownershipReason(issue, refresh = false) {
+              if (!Array.isArray(issue.assignees) ||
+                  issue.assignees.some(assignee => typeof assignee?.login !== 'string' || !validLogin.test(assignee.login))) {
+                return 'issue assignees could not be verified';
+              }
+              if (issue.assignees.some(assignee => copilotLogin.test(assignee.login))) {
+                return 'assigned to the Copilot coding agent';
+              }
+              if (refresh || !ownershipCache.has(issue.number)) {
+                ownershipCache.set(issue.number, (async () => {
+                  let count;
+                  try {
+                    const data = await github.graphql(linkedPullsQuery, { owner, repo, number: issue.number });
+                    if (data != null && Object.hasOwn(data, 'errors') && (!Array.isArray(data.errors) || data.errors.length)) {
+                      throw new Error('GraphQL returned errors.');
+                    }
+                    count = data?.repository?.issue?.closedByPullRequestsReferences?.totalCount;
+                  } catch {
+                    count = undefined;
+                  }
+                  if (!nonnegative(count)) return 'linked pull requests could not be verified';
+                  return count > 0 ? 'an open pull request is linked to this issue' : '';
+                })());
+              }
+              return ownershipCache.get(issue.number);
+            }
             const receiptPattern = /^<!-- skc-triage-receipt:v1 (\{[^\r\n]*\}) -->$/;
             const intentPattern = /^<!-- skc-triage-manual-intent:v1 (\{[^\r\n]*\}) -->$/;
             // The only allowed suffix is a durable, non-budget-consuming rejection.
             const rejectedIntent = '<!-- skc-triage-manual-rejected:force-required -->';
+            // Readable notes keep ledger comments from rendering blank on GitHub.
+            const intentNote = value => `_Manual triage request recorded${value.force ? ' (force)' : ''}; the dispatcher processes it on its next reconciliation._`;
+            const rejectedNote = '_Manual triage request not run: the issue already has triage context or a handoff. Re-run with force=true to start a new budget._';
             function intentFrom(comment, issueNumber) {
               if (!currentAuthor(comment)) return null;
               const lines = (comment.body || '').split('\n');
@@ -165,12 +241,20 @@ jobs:
               }
               const value = JSON.parse(match[1]);
               if (Object.keys(value).sort().join(',') !== 'force,issue,run_id' || value.issue !== issueNumber ||
-                  !positive(value.run_id) || typeof value.force !== 'boolean' ||
-                  (lines.length !== 1 && !(lines.length === 2 && lines[1] === rejectedIntent))) {
+                  !positive(value.run_id) || typeof value.force !== 'boolean') {
                 throw new Error('Invalid authenticated manual intent.');
               }
-              return { ...value, comment, rejected: lines.length === 2 };
+              // Legacy marker-only forms and the readable forms are accepted exactly.
+              const rest = lines.slice(1).join('\n');
+              const rejected = [rejectedIntent, `${rejectedIntent}\n\n${rejectedNote}`].includes(rest);
+              if (!rejected && !['', `\n${intentNote(value)}`].includes(rest) || (rest === '' && lines.length !== 1)) {
+                throw new Error('Invalid authenticated manual intent.');
+              }
+              return { ...value, comment, rejected };
             }
+            const receiptKinds = { initial: 'initial triage', clarification: 'clarification retry', manual: 'manual retry', sol: 'Sol recovery' };
+            const receiptBody = value => `<!-- skc-triage-receipt:v1 ${JSON.stringify(value)} -->\n\n` +
+              `_Triage dispatch ledger: ${receiptKinds[value.kind] || value.kind} — ${value.status}${value.status === 'pending' ? ' (if this stays pending, an operator must reconcile it against run history)' : ''}._`;
             const outcomes = [];
             const failures = [];
 
@@ -205,7 +289,16 @@ jobs:
                   /^<!-- skc-triage-handoff:[1-9]\d*:\d+:(?:budget|sol-failed|sol-incomplete):\d+ -->$/.test(line)) return true;
               // Require a final, well-formed gh-aw metadata footer with one
               // exact known workflow_id, not a substring in quoted prose.
-              const body = comment.body || '';
+              // gh-aw (v0.89+) appends one caller marker after the footer; it
+              // must name this repository and the footer's own workflow_id.
+              let body = comment.body || '';
+              let callerId;
+              const trailer = /\r?\n<!-- gh-aw-workflow-call-id: ([^\s<>]+) -->\s*$/.exec(body);
+              if (trailer) {
+                callerId = trailer[1];
+                body = body.slice(0, trailer.index);
+              }
+              if (body.includes('gh-aw-workflow-call-id')) return false;
               if ((body.match(/<!-- gh-aw-agentic-workflow:/g) || []).length !== 1) return false;
               const footer = /(?:^|\r?\n)<!-- gh-aw-agentic-workflow:((?:(?!-->|<!--)[\s\S])*)-->\s*$/.exec(body);
               if (!footer) return false;
@@ -231,6 +324,7 @@ jobs:
               const ids = fields.filter(field => /^workflow_id:/.test(field));
               if (ids.length !== 1) return false;
               const workflowId = ids[0].slice('workflow_id:'.length).trim();
+              if (callerId !== undefined && callerId !== `${owner}/${repo}/${workflowId}`) return false;
               return knownWorkflows.has(workflowId) && (title === undefined || generatedTitles.get(workflowId) === title);
             }
 
@@ -248,10 +342,12 @@ jobs:
               const receipt = JSON.parse(receiptPattern.exec(matches[0])[1]);
               if (!/^[A-Za-z0-9_-]+$/.test(receipt.id || '') || receipt.issue !== issueNumber ||
                   !['initial', 'clarification', 'manual', 'sol'].includes(receipt.kind) ||
-                  !['pending', 'accepted', 'failed'].includes(receipt.status) ||
+                  !['pending', 'accepted', 'failed', 'skipped'].includes(receipt.status) ||
                   !nonnegative(receipt.through) || !nonnegative(receipt.epoch) ||
                   !nonnegative(receipt.origin_run_id) || !positive(receipt.dispatcher_run_id) ||
                   typeof receipt.labelsApplied !== 'boolean' ||
+                  (receipt.gate_version !== undefined && ![1, 2].includes(receipt.gate_version)) ||
+                  (receipt.status === 'skipped' && (!positive(receipt.skipped_run_id) || !positive(receipt.skipped_attempt))) ||
                   (receipt.snapshot_at !== undefined && !timestamp(receipt.snapshot_at)) ||
                   (receipt.body_digest !== undefined && (typeof receipt.body_digest !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.body_digest))) ||
                   (receipt.body_at_snapshot !== undefined && typeof receipt.body_at_snapshot !== 'string') ||
@@ -312,6 +408,87 @@ jobs:
               return runs;
             }
 
+            const gateCache = new Map();
+            async function completedGate(run, expected) {
+              if (run.status !== 'completed') throw new Error('Cannot prove a gate outcome for an active run.');
+              const attempt = run.run_attempt === undefined ? 1 : Number(run.run_attempt);
+              if (!positive(attempt)) throw new Error(`Invalid run attempt for ${run.id}.`);
+              const key = `${run.id}:${attempt}`;
+              if (!gateCache.has(key)) {
+                gateCache.set(key, (async () => {
+                  let seen = 0;
+                  let expectedCount;
+                  const jobs = [];
+                  const seenIds = new Set();
+                  for (let page = 1; ; page++) {
+                    const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+                      ...base, run_id: run.id, attempt_number: attempt, per_page: 100, page,
+                    });
+                    if (!nonnegative(data?.total_count) || data.total_count >= 1000 || !Array.isArray(data.jobs) ||
+                        (expectedCount !== undefined && expectedCount !== data.total_count)) {
+                      throw new Error(`Run ${run.id} job history is incomplete or changed.`);
+                    }
+                    expectedCount = data.total_count;
+                    for (const job of data.jobs) {
+                      if (!positive(job?.id) || seenIds.has(job.id)) throw new Error(`Run ${run.id} has invalid or duplicate jobs.`);
+                      seenIds.add(job.id);
+                    }
+                    seen += data.jobs.length;
+                    if (seen > expectedCount) throw new Error(`Run ${run.id} job count is inconsistent.`);
+                    jobs.push(...data.jobs);
+                    if (seen >= expectedCount) break;
+                    if (!data.jobs.length || page >= 10) throw new Error(`Run ${run.id} job pagination is incomplete.`);
+                  }
+                  const gates = jobs.filter(job => job.name === 'Triage ownership gate v1');
+                  if (gates.length === 0) return 'legacy';
+                  const agents = jobs.filter(job => job.name === 'agent');
+                  if (gates.length !== 1 || agents.length !== 1 || gates[0].status !== 'completed' ||
+                      gates[0].conclusion !== 'success' || !Array.isArray(gates[0].steps) ||
+                      agents[0].status !== 'completed' || typeof agents[0].conclusion !== 'string') {
+                    throw new Error(`Run ${run.id} has no unambiguous completed ownership gate.`);
+                  }
+                  const marker = name => gates[0].steps.filter(step => step.name === name);
+                  const admitted = marker('Ownership gate admitted');
+                  const blocked = marker('Ownership gate blocked');
+                  if (admitted.length !== 1 || blocked.length !== 1 ||
+                      admitted[0].status !== 'completed' || blocked[0].status !== 'completed') {
+                    throw new Error(`Run ${run.id} has invalid ownership gate markers.`);
+                  }
+                  const admittedOk = admitted[0].conclusion === 'success';
+                  const blockedOk = blocked[0].conclusion === 'success';
+                  if (admittedOk === blockedOk) throw new Error(`Run ${run.id} has ambiguous ownership gate markers.`);
+                  if (blockedOk && agents[0].conclusion === 'skipped') return 'blocked';
+                  if (admittedOk && agents[0].conclusion !== 'skipped') {
+                    if (!Array.isArray(agents[0].steps)) throw new Error(`Run ${run.id} has no agent step evidence.`);
+                    const preflight = agents[0].steps.filter(step => step.name === 'Check whether implementation already owns the issue');
+                    const preflightAdmitted = agents[0].steps.filter(step => step.name === 'Pre-agent eligibility admitted');
+                    const preflightBlocked = agents[0].steps.filter(step => step.name === 'Pre-agent eligibility blocked');
+                    // Runs predating the hard preflight gate have no marker steps.
+                    if (!preflightAdmitted.length && !preflightBlocked.length) return 'admitted-legacy-preflight';
+                    if (preflight.length !== 1 || preflightAdmitted.length !== 1 || preflightBlocked.length !== 1 ||
+                        [preflight[0], preflightAdmitted[0], preflightBlocked[0]].some(step => step.status !== 'completed')) {
+                      throw new Error(`Run ${run.id} has incomplete pre-agent eligibility evidence.`);
+                    }
+                    if (preflight[0].conclusion === 'failure' &&
+                        preflightAdmitted[0].conclusion === 'skipped' && preflightBlocked[0].conclusion === 'skipped') return 'blocked';
+                    if (preflight[0].conclusion !== 'success') throw new Error(`Run ${run.id} has an invalid pre-agent eligibility check.`);
+                    const preflightAdmittedOk = preflightAdmitted[0].conclusion === 'success';
+                    const preflightBlockedOk = preflightBlocked[0].conclusion === 'success';
+                    if (preflightAdmittedOk && preflightBlocked[0].conclusion === 'skipped') return 'admitted';
+                    if (preflightBlockedOk && preflightAdmitted[0].conclusion === 'skipped') return 'blocked';
+                    throw new Error(`Run ${run.id} has ambiguous pre-agent eligibility markers.`);
+                  }
+                  throw new Error(`Run ${run.id} has an inconsistent agent/gate outcome.`);
+                })());
+              }
+              const result = await gateCache.get(key);
+              if (expected && result === 'legacy') throw new Error(`Run ${run.id} lacks its required ownership gate.`);
+              if (expected === 2 && result === 'admitted-legacy-preflight') {
+                throw new Error(`Run ${run.id} lacks its required pre-agent eligibility markers.`);
+              }
+              return result === 'admitted-legacy-preflight' ? 'admitted' : result;
+            }
+
             async function reconcileIssue(issueNumber) {
               const parameters = { ...base, issue_number: issueNumber };
               const fresh = async (allowDisputed = false) => {
@@ -331,6 +508,9 @@ jobs:
                 return operation(issue);
               };
               let issue = await fresh(true);
+              // Ownership is checked before any ledger, label or comment write.
+              const owned = await ownershipReason(issue);
+              if (owned) return `skipped: ${owned}`;
               // GitHub comment timestamps have second precision. Round the
               // lower boundary down; through IDs still deduplicate replies.
               const snapshotAt = new Date(Math.floor(Date.now() / 1000) * 1000).toISOString();
@@ -360,18 +540,18 @@ jobs:
               if (new Set(receipts.map(receipt => receipt.value.id)).size !== receipts.length) {
                 throw new Error('Duplicate receipt IDs; refusing ambiguous reconciliation.');
               }
-              const runs = (await history()).filter(run => run.issueNumber === issueNumber)
+              const allRuns = (await history()).filter(run => run.issueNumber === issueNumber)
                 .sort((left, right) => timestamp(left.created_at) - timestamp(right.created_at) || left.id - right.id);
-              if (runs.some(run => run.receiptId && !receipts.some(receipt => receipt.value.id === run.receiptId &&
+              if (allRuns.some(run => run.receiptId && !receipts.some(receipt => receipt.value.id === run.receiptId &&
                   run.kind === (receipt.value.kind === 'sol' ? 'sol' : 'luna') && run.origin === receipt.value.origin_run_id))) {
                 throw new Error('A correlated target run has no authenticated ledger entry; budget/queue state is unprovable.');
               }
-              const proof = receipt => runs.filter(run => run.receiptId === receipt.value.id &&
+              const proof = receipt => allRuns.filter(run => run.receiptId === receipt.value.id &&
                 run.kind === (receipt.value.kind === 'sol' ? 'sol' : 'luna') && run.origin === receipt.value.origin_run_id);
               const save = async (receipt, changes, notDispatched = false) => {
                 const value = { ...receipt.value, ...changes };
                 const update = () => github.rest.issues.updateComment({
-                  ...base, comment_id: receipt.comment.id, body: `<!-- skc-triage-receipt:v1 ${JSON.stringify(value)} -->`,
+                  ...base, comment_id: receipt.comment.id, body: receiptBody(value),
                 });
                 // A proven pre-POST stop must not become an uncertain dispatch.
                 // Ledger-only cleanup is safe even after the issue becomes gated.
@@ -383,27 +563,27 @@ jobs:
 
               async function repairLabels(receipt) {
                 if (receipt.value.status !== 'accepted' || receipt.value.labelsApplied) return;
-                // Sol has no clarification-label ownership. For Luna, a target
-                // already running/completed may have just asked a NEW question.
-                historyCache = undefined;
-                const target = (await history()).find(run => run.issueNumber === issueNumber &&
-                  run.receiptId === receipt.value.id && run.kind === 'luna');
+                // Guarded runs leave question in place until the target's
+                // scoped safe output resolves it. Legacy receipts retain
+                // their existing label-repair behavior.
                 const latestAccepted = receipts.filter(item => item.value.status === 'accepted').at(-1);
                 if (receipt.value.kind !== 'sol' && latestAccepted === receipt) {
-                  const state = await fresh();
-                  const currentComments = await github.paginate(github.rest.issues.listComments, { ...parameters, per_page: 100 });
-                  const freshQuestion = currentComments.some(comment => waitingComment(comment) &&
-                    (comment.id > receipt.comment.id || timestamp(comment.updated_at) > timestamp(receipt.comment.created_at)) &&
-                    !/^<!-- skc-triage-observed-run:/.test((comment.body || '').split(/\r?\n/)[1] || ''));
-                  await mutate(async current => {
-                    if (labelsOf(state).includes('question') && labelsOf(current).includes('question') && !freshQuestion) {
-                      try {
-                        await github.rest.issues.removeLabel({ ...parameters, name: 'question' });
-                      } catch (error) {
-                        if (error.status !== 404) throw error;
+                  if (![1, 2].includes(receipt.value.gate_version)) {
+                    const state = await fresh();
+                    const currentComments = await github.paginate(github.rest.issues.listComments, { ...parameters, per_page: 100 });
+                    const freshQuestion = currentComments.some(comment => waitingComment(comment) &&
+                      (comment.id > receipt.comment.id || timestamp(comment.updated_at) > timestamp(receipt.comment.created_at)) &&
+                      !/^<!-- skc-triage-observed-run:/.test((comment.body || '').split(/\r?\n/)[1] || ''));
+                    await mutate(async current => {
+                      if (labelsOf(state).includes('question') && labelsOf(current).includes('question') && !freshQuestion) {
+                        try {
+                          await github.rest.issues.removeLabel({ ...parameters, name: 'question' });
+                        } catch (error) {
+                          if (error.status !== 404) throw error;
+                        }
                       }
-                    }
-                  });
+                    });
+                  }
                   // Always retry the accepted receipt's failed label update,
                   // even when the target has started/completed in the meantime.
                   await mutate(() => github.rest.issues.addLabels({ ...parameters, labels: ['needs-triage'] }));
@@ -426,14 +606,45 @@ jobs:
                 if (receipt.value.status === 'failed') continue;
                 const matches = proof(receipt);
                 if (matches.length > 1) throw new Error(`Multiple target runs for receipt ${receipt.value.id}; paused.`);
+                if (receipt.value.status === 'skipped') {
+                  if (matches.length && (matches[0].id !== receipt.value.skipped_run_id ||
+                      (matches[0].run_attempt === undefined ? 1 : Number(matches[0].run_attempt)) !== receipt.value.skipped_attempt)) {
+                    throw new Error(`A skipped run for receipt ${receipt.value.id} was rerun; manual reconciliation is required.`);
+                  }
+                  continue;
+                }
                 if (receipt.value.status === 'pending' && matches.length === 1) await save(receipt, { status: 'accepted' });
+                if (matches.length === 1 && matches[0].status === 'completed') {
+                  const gate = await completedGate(matches[0], receipt.value.gate_version);
+                  if (gate === 'blocked') {
+                    if (receipt.value.labelsApplied) {
+                      throw new Error(`Blocked run ${matches[0].id} already consumed labels; manual reconciliation is required.`);
+                    }
+                    await save(receipt, { status: 'skipped', skipped_run_id: matches[0].id,
+                      skipped_attempt: matches[0].run_attempt === undefined ? 1 : Number(matches[0].run_attempt) });
+                    continue;
+                  }
+                } else if ([1, 2].includes(receipt.value.gate_version)) {
+                  // Until the target finishes, its gate outcome is not durable
+                  // proof that the human reply and question were consumed.
+                  continue;
+                }
                 if (receipt.value.status === 'accepted') await repairLabels(receipt);
               }
               if (receipts.some(receipt => receipt.value.status === 'pending' ||
                   (receipt.value.status === 'accepted' && proof(receipt).length !== 1))) {
                 return 'blocked: pending/accepted receipt has no exact visible target run (manual cannot bypass)';
               }
+              const ignoredRuns = new Set(receipts.filter(receipt => receipt.value.status === 'skipped')
+                .map(receipt => receipt.value.skipped_run_id));
+              for (const run of allRuns.filter(item => !item.receiptId && item.status === 'completed')) {
+                if (await completedGate(run, false) === 'blocked') ignoredRuns.add(run.id);
+              }
+              const runs = allRuns.filter(run => !ignoredRuns.has(run.id));
               if (runs.some(run => run.status !== 'completed')) {
+                const guardedActive = receipts.filter(receipt => receipt.value.status === 'accepted' &&
+                  [1, 2].includes(receipt.value.gate_version) && !receipt.value.labelsApplied &&
+                  proof(receipt).some(run => run.status !== 'completed'));
                 issue = await fresh();
                 if (labelsOf(issue).includes('question')) {
                   for (const receipt of receipts.filter(item => item.value.status === 'accepted' &&
@@ -444,13 +655,15 @@ jobs:
                   // waiting state without consuming budget or changing labels.
                   const active = runs.filter(run => run.status !== 'completed').at(-1);
                   const observed = `<!-- skc-triage-observed-run:${active.id} -->`;
-                  if (!comments.some(comment => waitingComment(comment) && (comment.body || '').split(/\r?\n/)[1] === observed)) {
+                  if (!guardedActive.some(receipt => proof(receipt).some(run => run.id === active.id)) &&
+                      !comments.some(comment => waitingComment(comment) && (comment.body || '').split(/\r?\n/)[1] === observed)) {
                     await mutate(() => github.rest.issues.createComment({ ...parameters,
                       body: `${clarificationMarker}\n${observed}\n\nThe issue is waiting for clarification; human replies remain queued until the current triage run completes.`,
                     }));
                   }
                 }
-                return 'queued replies retained while Luna/Sol is active';
+                return guardedActive.length ? 'queued replies retained until the guarded run completes' :
+                  'queued replies retained while Luna/Sol is active';
               }
               issue = await fresh();
               const accepted = receipts.filter(receipt => receipt.value.status === 'accepted');
@@ -485,13 +698,14 @@ jobs:
                 if (receipts.some(receipt => receipt.value.id === id)) return 'dispatcher run already recorded; not replaying';
                 // Preflight failures have no POST ambiguity and no reservation.
                 await github.rest.repos.getContent({ ...base, path: `.github/workflows/${workflow}`, ref: branch });
-                await fresh();
-                const value = { id, issue: issueNumber, kind, status: 'pending', through: batchThrough,
+                const ownedNow = await ownershipReason(await fresh(), true);
+                if (ownedNow) return `skipped before dispatch: ${ownedNow}`;
+                const value = { id, issue: issueNumber, kind, status: 'pending', through: batchThrough, gate_version: 2,
                   epoch: generation, origin_run_id: origin, dispatcher_run_id: dispatcherRunId, labelsApplied: false,
                   snapshot_at: snapshotAt, body_digest: bodyDigest(issue.body),
                   waiting: labelsOf(issue).includes('question') || Boolean(latestWaiting) };
                 const { data: comment } = await mutate(() => github.rest.issues.createComment({
-                  ...parameters, body: `<!-- skc-triage-receipt:v1 ${JSON.stringify(value)} -->`,
+                  ...parameters, body: receiptBody(value),
                 }));
                 // Do not dispatch if the reservation is not a verifiable receipt.
                 if (!positive(comment.id) || !currentAuthor(comment)) throw new Error('Cannot authenticate newly reserved receipt; dispatch paused.');
@@ -504,7 +718,15 @@ jobs:
                     comment_id: kind === 'clarification' && batchThrough ? String(batchThrough) : '', dispatch_receipt_id: id };
                 // Separate the POST from finalization: a receipt/label failure
                 // AFTER a successful POST must never reclassify it as rejected.
-                try { await fresh(); } catch (error) {
+                try {
+                  const beforePost = await fresh();
+                  const owned = await ownershipReason(beforePost, true);
+                  if (owned) {
+                    const error = new Error(owned);
+                    error.gated = true;
+                    throw error;
+                  }
+                } catch (error) {
                   await save(receipt, { status: 'failed' }, true);
                   throw error;
                 }
@@ -520,7 +742,6 @@ jobs:
                   throw new Error(`Dispatch outcome uncertain (${status || 'network'}); receipt ${id} remains pending. No POST retry.`);
                 }
                 await save(receipt, { status: 'accepted' });
-                await repairLabels(receipt);
                 return `accepted ${kind} receipt ${id} through ${batchThrough} (epoch ${generation})`;
               }
 
@@ -530,7 +751,7 @@ jobs:
                 issue = await fresh();
                 if ((hasContext(issue) || labelsOf(issue).some(label => ['triage-stuck', 'agent-not-processable'].includes(label))) && !intent.force) {
                   await mutate(() => github.rest.issues.updateComment({ ...base, comment_id: intent.comment.id,
-                    body: `${firstLine(intent.comment)}\n${rejectedIntent}` }));
+                    body: `${firstLine(intent.comment)}\n${rejectedIntent}\n\n${rejectedNote}` }));
                   intent.rejected = true;
                   continue;
                 }
@@ -562,10 +783,12 @@ jobs:
                   ? bodyDigest(issue.body) !== latestReceipt.value.body_digest
                   : latestReceipt.value.body_at_snapshot !== undefined && issue.body !== latestReceipt.value.body_at_snapshot);
               const completeVerdict = newQuestion || changedContext ||
-                (latest?.conclusion === 'success' && (hasContext(issue) || labelsOf(issue).includes('question')));
+                (latest?.conclusion === 'success' && (hasContext(issue) ||
+                  (![1, 2].includes(latestReceipt?.value.gate_version) && labelsOf(issue).includes('question'))));
 
+              // Turn comments are edited in place, so their latest edit counts.
               const waitingNow = labelsOf(issue).includes('question') || (latestWaiting &&
-                (!latest || timestamp(latestWaiting.created_at) >= timestamp(latest.created_at)));
+                (!latest || Math.max(timestamp(latestWaiting.created_at), timestamp(latestWaiting.updated_at)) >= timestamp(latest.created_at)));
               const waitingRunIds = latest?.kind === 'sol' ? [latest.id, latest.origin] : [latest?.id];
               const waitingRuns = runs.filter(run => waitingRunIds.includes(run.id));
               const priorWaiting = accepted.some(receipt => proof(receipt).some(run => waitingRunIds.includes(run.id)) &&
@@ -600,7 +823,8 @@ jobs:
               if (latest && !completeVerdict) {
                 if (latest.kind === 'sol') return handoff('sol-incomplete', latest.origin);
                 const recovery = runs.find(run => run.kind === 'sol' && run.origin === latest.id);
-                const recoveryReceipt = receipts.find(receipt => receipt.value.kind === 'sol' && receipt.value.origin_run_id === latest.id);
+                const recoveryReceipt = receipts.find(receipt => receipt.value.kind === 'sol' &&
+                  receipt.value.status !== 'skipped' && receipt.value.origin_run_id === latest.id);
                 if (recovery || recoveryReceipt) return handoff('sol-incomplete', latest.id);
                 return dispatch('sol', through, epoch, latest.id);
               }
