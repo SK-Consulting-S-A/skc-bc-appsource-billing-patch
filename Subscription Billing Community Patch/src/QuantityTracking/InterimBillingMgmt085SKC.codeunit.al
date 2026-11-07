@@ -1,5 +1,6 @@
 namespace SKC.Subscription;
 
+using Microsoft.Finance.Currency;
 using Microsoft.Sales.Document;
 using Microsoft.SubscriptionBilling;
 
@@ -10,6 +11,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
         tabledata SubQuantityHistory085SKC = RIM,
         tabledata "Billing Line" = RIM,
         tabledata "Billing Line Archive" = R,
+        tabledata "Billing Template" = RIM,
         tabledata "Subscription Line" = R,
         tabledata "Subscription Header" = R,
         tabledata "Customer Subscription Contract" = R,
@@ -18,6 +20,9 @@ codeunit 70631064 InterimBillingMgmt085SKC
     var
         FromDateFilter: Date;
         ToDateFilter: Date;
+        InterimTemplateCodeTok: Label 'SKC-INTERIM', Locked = true;
+        InterimTemplateDescTok: Label 'Interim billing (quantity changes) - no proposals', Locked = true;
+        InterimNoContractTok: Label 'INTERIM-ONLY', Locked = true;
         NoUnbilledChangesMsg: Label 'No unbilled quantity changes found for contract %1.', Comment = '%1 = Contract No.';
         BillingLinesCreatedMsg: Label '%1 interim billing line(s) created for contract %2. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No.';
         NoBillingArchiveMsg: Label 'Subscription %1 has never been billed. Cannot calculate pro-rata for quantity change on %2.', Comment = '%1 = Subscription No., %2 = Change Date';
@@ -48,9 +53,11 @@ codeunit 70631064 InterimBillingMgmt085SKC
         LineCount: Integer;
         SkippedCount: Integer;
         PendingEntryNo: Integer;
+        InterimTemplateCode: Code[20];
     begin
         FromDateFilter := NewFromDate;
         ToDateFilter := NewToDate;
+        InterimTemplateCode := EnsureInterimTemplate();
 
         ContractLine.SetRange("Subscription Contract No.", CustomerContract."No.");
         ContractLine.SetFilter("Subscription Header No.", '<>%1', '');
@@ -128,6 +135,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
                 BillingLine."Service Object Quantity" := Abs(QtyHistory.DeltaQuantity085SKC);
                 BillingLine."Billing from" := WindowFrom;
                 BillingLine."Billing to" := WindowTo;
+                BillingLine."Billing Template Code" := InterimTemplateCode;
                 BillingLine.Amount := DeltaAmount;
                 BillingLine."Unit Price" := ProRataUnitPrice;
                 BillingLine."Billing Rhythm" := SubLine."Billing Rhythm";
@@ -189,42 +197,97 @@ codeunit 70631064 InterimBillingMgmt085SKC
     /// already paid for, and the amount calculated by interim billing is discarded.
     ///
     /// Several billing lines for one subscription line are aggregated into a single
-    /// temporary line with their unit prices summed, so the correction is applied
-    /// only where the temporary line stands for exactly one billing line and that
-    /// line is an interim charge. Anything aggregated is left to standard behaviour
-    /// rather than guessed at.
+    /// temporary line with their unit prices summed. When they share one seat delta,
+    /// that delta is the quantity; when the deltas differ, the line becomes one lump sum
+    /// of the actual interim amounts. Aggregates that are not purely the open interim
+    /// lines are left to standard behaviour.
     /// </summary>
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Create Billing Documents", 'OnBeforeInsertSalesLineFromContractLine', '', false, false)]
     local procedure PreserveInterimQuantityOnBeforeInsertSalesLine(var SalesLine: Record "Sales Line"; var TempBillingLine: Record "Billing Line" temporary)
     var
         BillingLine: Record "Billing Line";
+        Currency: Record Currency;
+        DesiredQty: Decimal;
+        InterimAmount: Decimal;
+        LineQty: Decimal;
+        UnitPrice: Decimal;
+        MixedQuantities: Boolean;
         Sign: Integer;
     begin
         if not IsInterimBillingEnabled() then
             exit;
 
+        // The lines being invoiced are still open here: the document number is stamped
+        // on them only after the sales line has been inserted.
         BillingLine.SetRange("Subscription Contract No.", TempBillingLine."Subscription Contract No.");
         BillingLine.SetRange("Subscription Line Entry No.", TempBillingLine."Subscription Line Entry No.");
-        BillingLine.SetRange("Billing from", TempBillingLine."Billing from");
-        BillingLine.SetRange("Billing to", TempBillingLine."Billing to");
         BillingLine.SetRange(Rebilling, TempBillingLine.Rebilling);
-        if BillingLine.Count() <> 1 then
+        BillingLine.SetRange("Document No.", '');
+        BillingLine.SetRange(InterimBilling085SKC, true);
+        if not BillingLine.FindSet() then
             exit;
-        BillingLine.FindFirst();
+        repeat
+            LineQty := Abs(BillingLine."Service Object Quantity");
+            if DesiredQty = 0 then
+                DesiredQty := LineQty
+            else
+                if LineQty <> DesiredQty then
+                    MixedQuantities := true;
+            InterimAmount += BillingLine.Amount;
+        until BillingLine.Next() = 0;
+        // Only an aggregate made purely of the open interim lines is reshaped.
+        if Abs(InterimAmount - TempBillingLine.Amount) > 0.01 then
+            exit;
+        if DesiredQty = 0 then
+            exit;
 
-        if not BillingLine.InterimBilling085SKC then
-            exit;
-        if BillingLine."Service Object Quantity" = 0 then
-            exit;
-        if SalesLine.Quantity = BillingLine."Service Object Quantity" then
-            exit;
+        // Standard sums the unit prices of the aggregated lines. With one seat delta that
+        // delta is the quantity; with different deltas no single quantity fits, so the
+        // line becomes one lump sum of the actual interim amounts.
+        UnitPrice := SalesLine."Unit Price";
+        if MixedQuantities then begin
+            if TempBillingLine."Unit Price" = 0 then
+                exit;
+            Currency.Initialize(SalesLine."Currency Code");
+            UnitPrice := Round(UnitPrice * Abs(InterimAmount) / TempBillingLine."Unit Price", Currency."Unit-Amount Rounding Precision");
+            DesiredQty := 1;
+        end;
 
         // GetSign on Billing Line is internal, so the direction already applied by
         // standard code is reused rather than recomputed.
         Sign := 1;
         if SalesLine.Quantity < 0 then
             Sign := -1;
-        SalesLine.Validate(Quantity, Sign * BillingLine."Service Object Quantity");
+        if SalesLine.Quantity <> Sign * DesiredQty then
+            SalesLine.Validate(Quantity, Sign * DesiredQty);
+        // Validating Quantity re-runs price and discount calculation; put back what billing decided.
+        SalesLine."Unit Price" := UnitPrice;
+        SalesLine.Validate("Line Discount %", TempBillingLine."Discount %");
+    end;
+
+    /// <summary>
+    /// Interim billing lines carry their own billing template. Without one, deleting the draft
+    /// invoice made Subscription Billing reset Next Billing Date to the interim window start and
+    /// delete the lines; with a template the lines are released like proposal lines. The
+    /// template's filter matches no contract, so a proposal run on it creates nothing.
+    /// </summary>
+    local procedure EnsureInterimTemplate(): Code[20]
+    var
+        BillingTemplate: Record "Billing Template";
+        CustomerContract: Record "Customer Subscription Contract";
+        OutStr: OutStream;
+    begin
+        if BillingTemplate.Get(InterimTemplateCodeTok) then
+            exit(BillingTemplate.Code);
+        BillingTemplate.Init();
+        BillingTemplate.Code := InterimTemplateCodeTok;
+        BillingTemplate.Description := CopyStr(InterimTemplateDescTok, 1, MaxStrLen(BillingTemplate.Description));
+        BillingTemplate.Partner := BillingTemplate.Partner::Customer;
+        CustomerContract.SetRange("No.", InterimNoContractTok);
+        BillingTemplate."Filter".CreateOutStream(OutStr, TextEncoding::UTF8);
+        OutStr.WriteText(CustomerContract.GetView(false));
+        BillingTemplate.Insert(false);
+        exit(BillingTemplate.Code);
     end;
 
     local procedure FindBillingPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingFrom: Date; var BillingTo: Date): Boolean
