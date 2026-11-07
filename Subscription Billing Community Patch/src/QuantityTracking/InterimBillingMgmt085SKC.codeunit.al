@@ -223,13 +223,18 @@ codeunit 70631064 InterimBillingMgmt085SKC
     local procedure FindBillingPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingFrom: Date; var BillingTo: Date): Boolean
     var
         BillingLineArchive: Record "Billing Line Archive";
+        BestBillingFrom: Date;
+        BestBillingTo: Date;
     begin
         BillingFrom := 0D;
         BillingTo := 0D;
 
-        // Only an invoice establishes a period that was actually charged. A credit memo
-        // reverses a period and must not become the basis for a pro-rata rate. Zero-length
-        // periods occur as migration artifacts and would make day weighting meaningless.
+        // Only an invoice establishes a period that was actually charged, and only if a
+        // credit memo has not since reversed it. A subscription that was invoiced, credited
+        // and re-invoiced on a corrected period carries archive rows for both periods, and
+        // taking the first would price the interim charge against a period the customer was
+        // refunded for. Zero-length periods occur as migration artifacts and would make day
+        // weighting meaningless. Where several periods still net to a charge, the latest wins.
         BillingLineArchive.SetRange("Subscription Header No.", SubLine."Subscription Header No.");
         BillingLineArchive.SetRange("Subscription Line Entry No.", SubLine."Entry No.");
         BillingLineArchive.SetRange(Partner, BillingLineArchive.Partner::Customer);
@@ -238,20 +243,80 @@ codeunit 70631064 InterimBillingMgmt085SKC
         BillingLineArchive.SetFilter("Billing to", '>=%1', ChangeDate);
         if BillingLineArchive.FindSet() then
             repeat
-                if BillingLineArchive."Billing to" > BillingLineArchive."Billing from" then begin
-                    BillingFrom := BillingLineArchive."Billing from";
-                    BillingTo := BillingLineArchive."Billing to";
-                    exit(true);
-                end;
+                if BillingLineArchive."Billing to" > BillingLineArchive."Billing from" then
+                    if BillingLineArchive."Billing to" > BestBillingTo then
+                        if IsPeriodNetBilled(SubLine, BillingLineArchive."Billing from", BillingLineArchive."Billing to") then begin
+                            BestBillingFrom := BillingLineArchive."Billing from";
+                            BestBillingTo := BillingLineArchive."Billing to";
+                        end;
             until BillingLineArchive.Next() = 0;
+
+        if BestBillingTo <> 0D then begin
+            BillingFrom := BestBillingFrom;
+            BillingTo := BestBillingTo;
+            exit(true);
+        end;
 
         if SubLine."Next Billing Date" > ChangeDate then begin
             BillingFrom := ChangeDate;
             BillingTo := SubLine."Next Billing Date" - 1;
+            CapAtLaterBilledPeriod(SubLine, ChangeDate, BillingTo);
             exit(true);
         end;
 
         exit(false);
+    end;
+
+    /// <summary>
+    /// With no invoice covering the change date the window falls back to the day before
+    /// Next Billing Date. A later period may already have been invoiced (a yearly renewal
+    /// raised after the change), and charging the delta up to Next Billing Date would bill
+    /// that period a second time. The window therefore stops the day before the first
+    /// later period that still nets to a charge.
+    /// </summary>
+    local procedure CapAtLaterBilledPeriod(SubLine: Record "Subscription Line"; ChangeDate: Date; var BillingTo: Date)
+    var
+        BillingLineArchive: Record "Billing Line Archive";
+    begin
+        BillingLineArchive.SetRange("Subscription Header No.", SubLine."Subscription Header No.");
+        BillingLineArchive.SetRange("Subscription Line Entry No.", SubLine."Entry No.");
+        BillingLineArchive.SetRange(Partner, BillingLineArchive.Partner::Customer);
+        BillingLineArchive.SetRange("Document Type", BillingLineArchive."Document Type"::Invoice);
+        BillingLineArchive.SetFilter("Billing from", '>%1&<=%2', ChangeDate, BillingTo);
+        if BillingLineArchive.FindSet() then
+            repeat
+                if BillingLineArchive."Billing to" > BillingLineArchive."Billing from" then
+                    if BillingLineArchive."Billing from" - 1 < BillingTo then
+                        if IsPeriodNetBilled(SubLine, BillingLineArchive."Billing from", BillingLineArchive."Billing to") then
+                            BillingTo := BillingLineArchive."Billing from" - 1;
+            until BillingLineArchive.Next() = 0;
+    end;
+
+    /// <summary>
+    /// True when invoices for this exact period still exceed the credit memos against it.
+    /// A period that nets to zero was invoiced and then fully reversed, so it must not be
+    /// used as the basis for a pro-rata rate.
+    /// </summary>
+    local procedure IsPeriodNetBilled(SubLine: Record "Subscription Line"; PeriodFrom: Date; PeriodTo: Date): Boolean
+    var
+        BillingLineArchive: Record "Billing Line Archive";
+        NetBilled: Decimal;
+    begin
+        BillingLineArchive.SetRange("Subscription Header No.", SubLine."Subscription Header No.");
+        BillingLineArchive.SetRange("Subscription Line Entry No.", SubLine."Entry No.");
+        BillingLineArchive.SetRange(Partner, BillingLineArchive.Partner::Customer);
+        BillingLineArchive.SetRange("Billing from", PeriodFrom);
+        BillingLineArchive.SetRange("Billing to", PeriodTo);
+        // Credit-memo rows carry either sign: a standard corrective credit memo archives a
+        // negative amount, a reconstructed one the positive document amount. Both reverse.
+        if BillingLineArchive.FindSet() then
+            repeat
+                if BillingLineArchive."Document Type" = BillingLineArchive."Document Type"::Invoice then
+                    NetBilled += BillingLineArchive.Amount
+                else
+                    NetBilled -= Abs(BillingLineArchive.Amount);
+            until BillingLineArchive.Next() = 0;
+        exit(NetBilled > 0);
     end;
 
     procedure HasUnbilledChangesForContract(ContractNo: Code[20]): Boolean
