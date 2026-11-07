@@ -24,6 +24,7 @@ codeunit 70631064 InterimBillingMgmt085SKC
         BillingLinesCreatedWithSkipsMsg: Label '%1 interim billing line(s) created for contract %2. %3 change(s) were skipped because no reliable pro-rata rate could be derived. Use "Create Documents" in Recurring Billing to generate the invoice.', Comment = '%1 = Line count, %2 = Contract No., %3 = Skipped count';
         CannotComputeProRataMsg: Label 'Subscription %1: no reliable pro-rata rate could be derived for the quantity change on %2, so no interim billing line was created. Check the Billing Base Period, Billing Rhythm and Price on the subscription line.', Comment = '%1 = Subscription No., %2 = Change Date';
         UnbilledChangesExistErr: Label 'Unbilled quantity changes exist for Subscription %1. Run "Create Interim Billing" on contract %2 before creating the regular billing proposal.', Comment = '%1 = Subscription No., %2 = Contract No.';
+        BilledByRegularBillingTok: Label 'Billed by regular billing', Locked = true;
 
     procedure ProcessContract(CustomerContract: Record "Customer Subscription Contract")
     begin
@@ -74,6 +75,12 @@ codeunit 70631064 InterimBillingMgmt085SKC
                     continue;
                 if QtyHistory.DeltaQuantity085SKC = 0 then
                     continue;
+                if IsBilledByRegularBilling(QtyHistory) then
+                    continue;
+                if ChangeIsAheadOfBilling(QtyHistory) then begin
+                    MarkBilledByRegularBilling(QtyHistory.EntryNo085SKC);
+                    continue;
+                end;
                 if not FindBillingPeriod(SubLine, QtyHistory.ChangeDate085SKC, BillingFrom, BillingTo) then begin
                     Message(NoBillingArchiveMsg, QtyHistory.SubscriptionHeaderNo085SKC, QtyHistory.ChangeDate085SKC);
                     continue;
@@ -331,10 +338,58 @@ codeunit 70631064 InterimBillingMgmt085SKC
                 QtyHistory.SetRange(SubscriptionHeaderNo085SKC, ContractLine."Subscription Header No.");
                 QtyHistory.SetRange(InterimBilled085SKC, false);
                 QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
-                if not QtyHistory.IsEmpty() then
-                    exit(true);
+                if QtyHistory.FindSet() then
+                    repeat
+                        if not IsBilledByRegularBilling(QtyHistory) then
+                            if not ChangeIsAheadOfBilling(QtyHistory) then
+                                exit(true);
+                    until QtyHistory.Next() = 0;
             until ContractLine.Next() = 0;
         exit(false);
+    end;
+
+    /// <summary>
+    /// True when the change takes effect on or after the next billing date of every open
+    /// customer line of the subscription. No billed period contains it, so there is nothing
+    /// to pro-rate, and the next regular invoice bills the new quantity anyway. Left as an
+    /// interim row it could never be billed and would block every proposal on the contract.
+    /// </summary>
+    local procedure ChangeIsAheadOfBilling(QtyHistory: Record SubQuantityHistory085SKC): Boolean
+    var
+        SubLine: Record "Subscription Line";
+        LineFound: Boolean;
+    begin
+        SubLine.SetRange("Subscription Header No.", QtyHistory.SubscriptionHeaderNo085SKC);
+        SubLine.SetRange(Partner, SubLine.Partner::Customer);
+        SubLine.SetRange(Closed, false);
+        SubLine.SetLoadFields("Next Billing Date");
+        if SubLine.FindSet() then
+            repeat
+                if (SubLine."Next Billing Date" = 0D) or (SubLine."Next Billing Date" > QtyHistory.ChangeDate085SKC) then
+                    exit(false);
+                LineFound := true;
+            until SubLine.Next() = 0;
+        exit(LineFound);
+    end;
+
+    local procedure IsBilledByRegularBilling(QtyHistory: Record SubQuantityHistory085SKC): Boolean
+    var
+        ReasonText: Text;
+    begin
+        ReasonText := QtyHistory.Reason085SKC;
+        exit(ReasonText.Contains(BilledByRegularBillingTok));
+    end;
+
+    local procedure MarkBilledByRegularBilling(EntryNo: Integer)
+    var
+        QtyHistory: Record SubQuantityHistory085SKC;
+    begin
+        if not QtyHistory.Get(EntryNo) then
+            exit;
+        QtyHistory.Reason085SKC := CopyStr(
+            DelChr(BilledByRegularBillingTok + ' - ' + QtyHistory.Reason085SKC, '>', ' - '),
+            1, MaxStrLen(QtyHistory.Reason085SKC));
+        QtyHistory.Modify(false);
     end;
 
     // --- Event Subscribers ---
@@ -388,6 +443,8 @@ codeunit 70631064 InterimBillingMgmt085SKC
         ContractLine: Record "Cust. Sub. Contract Line";
         QtyHistory: Record SubQuantityHistory085SKC;
         ContractNo: Code[20];
+        AheadEntryNo: Integer;
+        AheadEntryNos: List of [Integer];
     begin
         if not IsInterimBillingEnabled() then
             exit;
@@ -400,13 +457,22 @@ codeunit 70631064 InterimBillingMgmt085SKC
         ContractLine.SetFilter("Subscription Header No.", '<>%1', '');
         if ContractLine.FindSet() then
             repeat
+                Clear(AheadEntryNos);
                 QtyHistory.SetRange(SubscriptionHeaderNo085SKC, ContractLine."Subscription Header No.");
                 QtyHistory.SetRange(InterimBilled085SKC, false);
                 QtyHistory.SetRange(BillingLineEntryNo085SKC, 0);
-                if not QtyHistory.IsEmpty() then
-                    Error(UnbilledChangesExistErr,
-                        ContractLine."Subscription Header No.",
-                        ContractNo);
+                if QtyHistory.FindSet() then
+                    repeat
+                        if not IsBilledByRegularBilling(QtyHistory) then
+                            if ChangeIsAheadOfBilling(QtyHistory) then
+                                AheadEntryNos.Add(QtyHistory.EntryNo085SKC)
+                            else
+                                Error(UnbilledChangesExistErr,
+                                    ContractLine."Subscription Header No.",
+                                    ContractNo);
+                    until QtyHistory.Next() = 0;
+                foreach AheadEntryNo in AheadEntryNos do
+                    MarkBilledByRegularBilling(AheadEntryNo);
             until ContractLine.Next() = 0;
     end;
 }
