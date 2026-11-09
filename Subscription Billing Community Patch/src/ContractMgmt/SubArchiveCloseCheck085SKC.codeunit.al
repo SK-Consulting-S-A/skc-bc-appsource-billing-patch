@@ -54,7 +54,18 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
     /// against it; a zero-amount bundle period counts while it was invoiced more often than
     /// credited. Credit rows are archived with either sign, so their size is taken as is.
     /// </summary>
-    local procedure IsPeriodNetBilled(SubLineEntryNo: Integer; PeriodFrom: Date; PeriodTo: Date): Boolean
+    procedure IsPeriodNetBilled(SubLineEntryNo: Integer; PeriodFrom: Date; PeriodTo: Date): Boolean
+    begin
+        exit(IsPeriodNetBilledExcluding(SubLineEntryNo, PeriodFrom, PeriodTo, ''));
+    end;
+
+    /// <summary>
+    /// IsPeriodNetBilled without the rows of ExcludedInvoiceNo and of the credit memos that
+    /// name it as their correction document, i.e. the period as it nets once that invoice is
+    /// cancelled - whether or not the cancelling credit memo has reached the archive yet.
+    /// A blank ExcludedInvoiceNo counts every row.
+    /// </summary>
+    procedure IsPeriodNetBilledExcluding(SubLineEntryNo: Integer; PeriodFrom: Date; PeriodTo: Date; ExcludedInvoiceNo: Code[20]): Boolean
     var
         BillingArchive: Record "Billing Line Archive";
         NetBilled: Decimal;
@@ -64,20 +75,30 @@ codeunit 70631067 SubArchiveCloseCheck085SKC
         BillingArchive.SetRange("Subscription Line Entry No.", SubLineEntryNo);
         BillingArchive.SetRange("Billing from", PeriodFrom);
         BillingArchive.SetRange("Billing to", PeriodTo);
-        BillingArchive.SetLoadFields("Document Type", Amount);
+        BillingArchive.SetLoadFields("Document Type", "Document No.", "Correction Document No.", Amount);
         if BillingArchive.FindSet() then
             repeat
-                if BillingArchive."Document Type" = BillingArchive."Document Type"::Invoice then begin
-                    NetBilled += BillingArchive.Amount;
-                    InvoiceCount += 1;
-                end else begin
-                    NetBilled -= Abs(BillingArchive.Amount);
-                    CreditCount += 1;
-                end;
+                if not IsExcludedArchiveRow(BillingArchive, ExcludedInvoiceNo) then
+                    if BillingArchive."Document Type" = BillingArchive."Document Type"::Invoice then begin
+                        NetBilled += BillingArchive.Amount;
+                        InvoiceCount += 1;
+                    end else begin
+                        NetBilled -= Abs(BillingArchive.Amount);
+                        CreditCount += 1;
+                    end;
             until BillingArchive.Next() = 0;
         if NetBilled > 0 then
             exit(true);
         exit((NetBilled = 0) and (InvoiceCount > CreditCount));
+    end;
+
+    local procedure IsExcludedArchiveRow(BillingArchive: Record "Billing Line Archive"; ExcludedInvoiceNo: Code[20]): Boolean
+    begin
+        if ExcludedInvoiceNo = '' then
+            exit(false);
+        if BillingArchive."Document Type" = BillingArchive."Document Type"::Invoice then
+            exit(BillingArchive."Document No." = ExcludedInvoiceNo);
+        exit(BillingArchive."Correction Document No." = ExcludedInvoiceNo);
     end;
 
     /// <summary>
