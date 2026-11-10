@@ -298,7 +298,8 @@ page 70631071 SubBillingStatus085SKC
                     end;
                 BillingArchive."Document Type"::"Credit Memo":
                     begin
-                        TotalBilledAmount -= BillingArchive.Amount;
+                        // Archived with either sign (standard corrective vs reconstructed); both reverse.
+                        TotalBilledAmount -= Abs(BillingArchive.Amount);
                         CreditMemoCountValue += 1;
                     end;
             end;

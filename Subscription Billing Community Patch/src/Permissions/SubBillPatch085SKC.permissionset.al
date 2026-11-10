@@ -27,6 +27,10 @@ permissionset 70631095 SubBillPatch085SKC
         codeunit SubInvoicePreviewCalc085SKC = X,
         codeunit SubBillExpectedCalc085SKC = X,
         codeunit InterimBillingMgmt085SKC = X,
+        codeunit InterimDeleteNbdGuard085SKC = X,
+        codeunit CrMemoContractDeferral085SKC = X,
+        codeunit SubCancelNbdGuard085SKC = X,
+        codeunit SubCreditMatch085SKC = X,
         codeunit SubQtyChangeCapture085SKC = X,
         codeunit SubArchiveCloseCheck085SKC = X,
         codeunit SubLineCalcBasePct085SKC = X,
@@ -45,5 +49,6 @@ permissionset 70631095 SubBillPatch085SKC
         page apiCustBillLineArch085SKC = X,
         page apiSubHeaders085SKC = X,
         page apiSubLineArchive085SKC = X,
-        page apiCustContractDeferrals085SKC = X;
+        page apiCustContractDeferrals085SKC = X,
+        page apiContractInvCancel085SKC = X;
 }
